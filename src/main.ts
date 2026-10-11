@@ -1120,15 +1120,13 @@ class TownGame {
     this.updateWildlife(dt);
   }
 
-  animate = (frameAt?:number,afterInputYield=false) => {
-    const scheduling=(navigator as Navigator&{scheduling?:{isInputPending:(options:{includeContinuous:boolean})=>boolean}}).scheduling;
-    if(!afterInputYield&&this.playerInputAllowed()&&scheduling?.isInputPending({includeContinuous:true})){
-      setTimeout(()=>this.animate(frameAt,true),0);return;
-    }
+  animate = (frameAt?:number) => {
     requestAnimationFrame(this.animate);
+    const scheduling=(navigator as Navigator&{scheduling?:{isInputPending:(options:{includeContinuous:boolean})=>boolean}}).scheduling;
+    const discreteInputPending=this.playerInputAllowed()&&scheduling?.isInputPending({includeContinuous:false});
     if(this.persistenceReady&&!document.hidden&&document.hasFocus()){
       if(!this.playerInputAllowed())this.resetPlayerInput();
-      if(!this.simulationClock.advanceFrame(frameAt,now(),(dt,input)=>this.simulateStep(dt,input)))this.resetPlayerInput();
+      if(!discreteInputPending&&!this.simulationClock.advanceFrame(frameAt,now(),(dt,input)=>this.simulateStep(dt,input)))this.resetPlayerInput();
       if(now()-this.lastPersistenceSaveAt>15000)void this.saveWorldState();
     }else this.resetSimulationClock();
     if(this.cameraMode==='god')this.updateGodCamera();

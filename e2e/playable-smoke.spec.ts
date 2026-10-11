@@ -1,3 +1,4 @@
+import {crossCoarseBoundary} from './helpers/coarse-native-transition.js';
 import { test, expect, type APIRequestContext, type Page } from './helpers/native-input-probe.js';
 import type { WorldPersistenceSnapshot } from '../src/types.js';
 import { startFirstPerson } from './helpers/native-start.js';
@@ -525,35 +526,7 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
     try {
       await Promise.race([captured,new Promise<never>((_,reject)=>{captureTimer=setTimeout(()=>reject(new Error('No coarse request within 45000 ms')),45_000);})]);
     } finally {clearTimeout(captureTimer);}
-    const transition=await page.evaluate(async()=>{
-      const status=()=>document.querySelector<HTMLElement>('#worldStatus');
-      const data=status()!.dataset;
-      const before={coarseRequestTimeouts:Number(data.coarseRequestTimeouts),coarseDecidedChunks:Number(data.coarseDecidedChunks),coarseLastBatchSize:Number(data.coarseLastBatchSize)};
-      const startedAt=performance.now();
-      const materialized=()=>Number(status()?.dataset.materializedChunks??'NaN');
-      const key=(type:'keydown'|'keyup',code:string)=>window.dispatchEvent(new KeyboardEvent(type,{code,bubbles:true}));
-      const until=async(predicate:()=>boolean,timeoutMs:number)=>{
-        const deadline=performance.now()+timeoutMs;
-        while(!predicate()){
-          if(performance.now()>=deadline)return false;
-          await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
-        }
-        return true;
-      };
-      try {
-        key('keydown','ShiftLeft');key('keydown','KeyD');
-        const entered=await until(()=>materialized()>0,2_500);
-        key('keyup','KeyD');key('keydown','KeyA');
-        const exited=entered&&await until(()=>materialized()===0,2_500);
-        if(exited){
-          const notify=(window as unknown as Window & {
-            notifyCoarseTransitionExited:()=>Promise<void>;
-          }).notifyCoarseTransitionExited;
-          await notify();
-        }
-        return {before,entered,exited,materialized:materialized(),startedAt,finishedAt:performance.now()};
-      } finally {key('keyup','KeyD');key('keyup','KeyA');key('keyup','ShiftLeft');}
-    });
+    const transition=await page.evaluate(crossCoarseBoundary);
     releaseOnce(); // Browser transition completion releases the held response immediately; finally remains the safety net.
     const before=transition.before;
     await testInfo.attach('coarse-native-transition-timing',{body:Buffer.from(JSON.stringify({capturedAt,releasedAt,transition},null,2)),contentType:'application/json'});
@@ -588,4 +561,5 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
     await page.unroute('**/api/world/chunks/decide').catch(()=>{});
   }
 });
+
 

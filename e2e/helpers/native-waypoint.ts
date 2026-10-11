@@ -263,13 +263,33 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
         setHeld(next);
         await new Promise<void>(resolve=>setTimeout(()=>{setHeld(new Set());resolve();},pulseMs));
       }
-      let observedPulse=Boolean(probe)&&simulation()>simulatedAt;
-      do {
-        const clock=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
-        if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-        if(observedPulse&&clock.pendingSeconds===0)break;
-        await nextFrame();observedPulse=true;
-      } while(performance.now()<deadline);
+      if(probe){
+        await new Promise<void>((resolve,reject)=>{
+          const world=document.querySelector<HTMLElement>('#worldStatus');
+          if(!world){reject(new Error('Waypoint clock observation is unavailable'));return;}
+          const releasedAt=performance.now();let refreshed=false,frame=0,settled=false;
+          const observer=new MutationObserver(()=>{refreshed=true;});
+          observer.observe(world,{attributes:true,attributeFilter:['data-simulation-clock']});
+          const finish=(error?:Error)=>{if(settled)return;settled=true;observer.disconnect();cancelAnimationFrame(frame);clearTimeout(timer);error?reject(error):resolve();};
+          const timer=setTimeout(()=>finish(),Math.max(0,deadline-performance.now()));
+          const sample=(frameAt:number)=>{
+            try{
+              const clock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
+              if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
+              if(refreshed&&frameAt>=releasedAt&&clock.pendingSeconds===0){finish();return;}
+              refreshed=false;frame=requestAnimationFrame(sample);
+            }catch(error){finish(error as Error);}
+          };
+          try{frame=requestAnimationFrame(sample);}catch(error){finish(error as Error);}
+        });
+      }else{
+        do {
+          await nextFrame();
+          const clock=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
+          if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
+          if(clock.pendingSeconds===0)break;
+        } while(performance.now()<deadline);
+      }
     }
     const finalSimulation=simulation();
     if(!Number.isFinite(finalSimulation)||finalSimulation<simulatedAt)throw new Error('Waypoint simulation observation reset or became unavailable');

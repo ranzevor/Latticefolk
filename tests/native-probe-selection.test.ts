@@ -7,6 +7,7 @@ const source=fs.readFileSync(new URL('../e2e/helpers/native-input-probe.ts',impo
 const script=source.replace(/^import .*;\n/gm,'').replace(/^export \{expect\};\n/gm,'').replace(/^export type .*;\n/gm,'').replace('export const test=','const test=');
 const code=ts.transpileModule(script+'\ntest;', {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
 const selected=[
+ 'coarse policy reply crossing a real materialize-unload transition is discarded and retry recovers',
  'fine NPC parcel belongs to its source chunk and survives native unload/revisit before one-shot pickup',
  'real playable scene keeps God View observer-only and uses authoritative ground',
  'ordinary walking crosses the home edge into the visible layout and preserves it through return and reload',
