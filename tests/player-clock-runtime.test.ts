@@ -18,6 +18,7 @@ async function fixture(){
   const document=w.document as Document;
   Object.defineProperty(w.navigator,'scheduling',{value:{isInputPending:()=>inputPending},configurable:true});
   let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0,inputPending=false;
+  const tasks:Array<()=>void>=[];
   const scheduled:Array<(frameAt?:number)=>void>=[],steps:number[]=[],coarseSteps:number[]=[],npcSteps:number[]=[],wildlifeSteps:number[]=[];
   Object.defineProperties(document,{hidden:{get:()=>hidden},hasFocus:{value:()=>focused},pointerLockElement:{get:()=>lockElement},
     exitPointerLock:{value:()=>{lockElement=null;document.dispatchEvent(new w.Event('pointerlockchange'));}}});
@@ -29,7 +30,7 @@ async function fixture(){
   const dependencies={require:(name:string)=>name==='three'?{...THREE,WebGLRenderer:Renderer,Clock:new Function('performance',`return ${THREE.Clock.toString()}`)({now:()=>time})}:name.endsWith('.css')?{}:require(name),
     exports:{},window:w,document,localStorage:w.localStorage,navigator:w.navigator,innerWidth:1440,innerHeight:900,devicePixelRatio:1,
     addEventListener:w.addEventListener.bind(w),performance:{now:()=>time},requestAnimationFrame:(fn:()=>void)=>{scheduled.push(fn);return scheduled.length;},
-    setTimeout:()=>0,clearTimeout:()=>{},fetch:()=>{throw Error('unexpected network request');}};
+    setTimeout:(callback:()=>void)=>{tasks.push(callback);return tasks.length;},clearTimeout:()=>{},fetch:()=>{throw Error('unexpected network request');}};
   const {TownGame,ui}=new Function(...Object.keys(dependencies),code)(...Object.values(dependencies));
   Object.assign(TownGame.prototype,{
     async initializePersistence(this:any){this.persistenceReady=true;this.coarseWorld={update:({dt}:{dt:number})=>coarseSteps.push(dt),activeBounds:()=>({minX:-200,maxX:200,minZ:-200,maxZ:200})};},
@@ -46,6 +47,7 @@ async function fixture(){
   return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},renders:()=>renderCalls,
     focus:(value:boolean)=>{focused=value;w.dispatchEvent(new w.Event(value?'focus':'blur'));},
     visible:(value:boolean)=>{hidden=!value;document.dispatchEvent(new w.Event('visibilitychange'));},
+    task:(at:number)=>{time=at;const callback=tasks.shift();assert.ok(callback);callback();assert.deepEqual(errors,[]);},taskCount:()=>tasks.length,
     close:()=>{game.controls.dispose();game.orbit.dispose();w.close();}};
 }
 
@@ -199,14 +201,23 @@ test('real animate drains queued input before integrating a delayed native relea
   const f=await fixture();try{
     for(let at=1000;at<=7000;at+=1000)f.frame(at,at);f.frame(7300,7300);
     const before=f.steps.reduce((a,b)=>a+b,0);
-    f.pending(true);f.frame(7776.2,7495.4);f.frame(8202.4,8062);
+    f.pending(true);f.frame(7776.2,7495.4);
     f.at(8511.4);f.game.playerMovementKey('KeyD',true,false,7430.6);
-    f.frame(8657.5,8445.3);f.frame(8945.6,8795.3);
     near(f.game.playerInputSeconds,0);near(f.steps.reduce((a,b)=>a+b,0),before);
     f.at(9119.3);f.game.playerMovementKey('KeyD',false,false,7684);
-    f.pending(false);f.frame(9428.9,9278.6);
+    f.task(9200);f.pending(false);f.frame(9428.9,9278.6);
     near(f.game.playerInputSeconds,.2534);near(f.game.playerPosition.x,.2534*4.5);
     f.frame(9500,9500);near(f.steps.reduce((a,b)=>a+b,0),9.5);
     near(f.game.simulationClock.diagnostics.pendingSeconds,0);
+  }finally{f.close();}
+});
+
+ test('a continuously pending input hint cannot suppress simulation and rendering indefinitely',async()=>{
+  const f=await fixture();try{
+    f.frame(1000,1000);const rendered=f.renders();f.pending(true);
+    f.frame(1050,1050);assert.equal(f.taskCount(),1);assert.equal(f.renders(),rendered);
+    f.task(1100);assert.equal(f.renders(),rendered+1);near(f.steps.reduce((a,b)=>a+b,0),1.05);
+    f.frame(1150,1150);assert.equal(f.taskCount(),1);f.task(1200);
+    assert.equal(f.renders(),rendered+2);near(f.steps.reduce((a,b)=>a+b,0),1.15);
   }finally{f.close();}
 });
