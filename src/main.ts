@@ -338,6 +338,7 @@ class TownGame {
   lastPersistenceSaveAt = 0;
   wildlifeDecisionPending = false;
   nextWildlifeBatchAt = 0;
+  npcVisualsDirty = false;
   movableDirty = false;
   movableSaveTimer?: number;
   movableSaveRetryMs = 1500;
@@ -1130,6 +1131,10 @@ class TownGame {
       if(now()-this.lastPersistenceSaveAt>15000)void this.saveWorldState();
     }else this.resetSimulationClock();
     if(this.cameraMode==='god')this.updateGodCamera();
+    if(this.npcVisualsDirty){
+      for(const agent of this.npcs.values())if(agent.mixer)this.alignNpcVisualToGround(agent);
+      this.npcVisualsDirty=false;
+    }
     this.updateCameraShadow();
     this.updateRaycast(); this.updateUi(); this.updateSpeech(); this.updateSelectionVisuals();
     if(now()-this.lastHealthPoll>10000) this.refreshHealth();
@@ -3157,7 +3162,7 @@ class TownGame {
       const locomotion=(agent.state.currentAction==='patrol'||agent.state.currentAction==='explore')?'Run':'Walk';
       this.setNpcAnimation(agent,activityActive?(agent.activityAnimation||'Idle'):(isMoving?locomotion:'Idle'));
       agent.mixer?.update(dt);
-      if(agent.mixer)this.alignNpcVisualToGround(agent);
+      if(agent.mixer)this.npcVisualsDirty=true;
       if(agent.task && agent.path.length===0) this.completeTask(agent);
       n.position.x=agent.mesh.position.x;n.position.z=agent.mesh.position.z;n.heading=agent.mesh.rotation.y;
     }

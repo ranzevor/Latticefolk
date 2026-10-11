@@ -32,6 +32,7 @@ async function fixture(){
     addEventListener:w.addEventListener.bind(w),performance:{now:()=>time},requestAnimationFrame:(fn:()=>void)=>{scheduled.push(fn);return scheduled.length;},
     setTimeout:(callback:()=>void)=>{tasks.push(callback);return tasks.length;},clearTimeout:()=>{},fetch:()=>{throw Error('unexpected network request');}};
   const {TownGame,ui}=new Function(...Object.keys(dependencies),code)(...Object.values(dependencies));
+  const actualUpdateNpcs=TownGame.prototype.updateNpcs;
   Object.assign(TownGame.prototype,{
     async initializePersistence(this:any){this.persistenceReady=true;this.coarseWorld={update:({dt}:{dt:number})=>coarseSteps.push(dt),activeBounds:()=>({minX:-200,maxX:200,minZ:-200,maxZ:200})};},
     async loadVisualAssets(){},refreshHealth(this:any){this.lastHealthPoll=time;},async saveWorldState(this:any){this.lastPersistenceSaveAt=time;},
@@ -44,7 +45,7 @@ async function fixture(){
   const key=(type:string,code:string,repeat=false,target:EventTarget=w)=>target.dispatchEvent(new w.KeyboardEvent(type,{code,repeat,bubbles:true}));
   const frame=(at:number,frameAt?:number)=>{time=at;const callback=scheduled.shift();assert.ok(callback);callback(frameAt);assert.deepEqual(errors,[]);};
   const look=(movementX:number)=>{const e=new w.MouseEvent('mousemove',{bubbles:true});Object.defineProperties(e,{movementX:{value:movementX},movementY:{value:0}});document.dispatchEvent(e);};
-  return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},continuous:(value:boolean)=>{continuousPending=value;},renders:()=>renderCalls,
+  return{game,actualUpdateNpcs,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},continuous:(value:boolean)=>{continuousPending=value;},renders:()=>renderCalls,
     focus:(value:boolean)=>{focused=value;w.dispatchEvent(new w.Event(value?'focus':'blur'));},
     visible:(value:boolean)=>{hidden=!value;document.dispatchEvent(new w.Event('visibilitychange'));},
     task:(at:number)=>{time=at;const callback=tasks.shift();assert.ok(callback);callback();assert.deepEqual(errors,[]);},taskCount:()=>tasks.length,
@@ -245,4 +246,23 @@ test('a release still queued across repeated rendering frames never accrues pres
   f.at(9685.1);f.game.playerMovementKey('KeyA',false,false,9499.4);f.pending(false);f.frame(9800,9800);
   near(f.game.playerInputSeconds,.1558);
  }finally{f.close();}
+});
+
+
+test('catch-up frames ground animated NPC visuals once after all simulation substeps',async()=>{
+  const f=await fixture();try{
+    let updates=0;const grounded:number[]=[];
+    const mesh=new THREE.Group();
+    const agent={state:{id:'grounding',hunger:0,energy:100,social:100,currentAction:'idle',position:{x:0,z:0}},
+      mesh,path:[],pathIndex:0,mixer:{update(){updates++;}},soles:{ground(){grounded.push(updates);}}};
+    f.game.npcs.set('grounding',agent);f.game.aiPaused=true;
+    f.game.updateNpcs=f.actualUpdateNpcs;f.game.moveNpc=()=>{};f.game.setNpcAnimation=()=>{};
+    f.frame(2000);
+    assert.equal(updates,40);assert.deepEqual(grounded,[40]);assert.equal(f.game.npcVisualsDirty,false);
+    f.pending(true);f.frame(2050);assert.deepEqual(grounded,[40]);
+    f.pending(false);f.frame(2100);assert.equal(updates,42);assert.deepEqual(grounded,[40,42]);
+    near(agent.state.hunger,.42);near(agent.state.energy,100-2.1*.075);
+    f.game.npcVisualsDirty=true;f.game.npcs.delete('grounding');
+    f.frame(2150);assert.deepEqual(grounded,[40,42]);assert.equal(f.game.npcVisualsDirty,false);
+  }finally{f.close();}
 });
