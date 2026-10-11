@@ -1,3 +1,4 @@
+import {disposeOwnedSkeletons} from './scene/ownedSkeletons.js';
 import './style.css';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -298,6 +299,7 @@ class TownGame {
   readonly streamedNpcs=new StreamedActors<NpcRuntime>(agent=>{
     agent.mixer?.stopAllAction();
     if(agent.mixer)agent.mixer.uncacheRoot(agent.mixer.getRoot());
+    disposeOwnedSkeletons(agent.mesh);
     agent.mesh.removeFromParent();
     if(agent.speechEl.parentNode)agent.speechEl.remove();if(agent.nameEl.parentNode)agent.nameEl.remove();
     this.visualTargets=this.visualTargets.filter(target=>target.group!==agent.mesh);
@@ -4292,3 +4294,4 @@ class TownGame {
 }
 
 new TownGame();
+
