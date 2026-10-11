@@ -22,7 +22,7 @@ for(const fail of [false,true])test(`shadow preparation renders detached casts a
  const r=renderer((object,c)=>{staged=object;rendered++;assert.equal(c,camera);assert.notEqual(object,scene);
   const copy=object.children.find(o=>(o as THREE.Light).isLight) as THREE.DirectionalLight;assert.notEqual(copy,sun);assert.equal(copy.castShadow,true);assert.deepEqual(new THREE.Vector3().setFromMatrixPosition(copy.matrix).toArray(),[4,6,8]);assert.notEqual(copy.target,sun.target);assert.deepEqual(copy.shadow.mapSize.toArray(),[1,1]);copy.shadow.dispose=()=>shadowDisposed++;
   const model=object.children.find(o=>(o as THREE.Mesh).isMesh) as THREE.Mesh;assert.notEqual(model,mesh);assert.equal(model.material,mesh.material);assert.equal(model.geometry,mesh.geometry);assert.equal(model.castShadow,true);assert.equal(model.receiveShadow,true);assert.equal(model.frustumCulled,false);
-  const target=r.api.getRenderTarget()!;assert.equal(target.width,1);assert.equal(target.height,1);assert.equal(r.api.getScissorTest(),false);assert.equal(r.api.shadowMap.needsUpdate,true);
+  const target=r.api.getRenderTarget()!;assert.equal(target.width,4);assert.equal(target.height,4);assert.deepEqual(r.api.getViewport(new THREE.Vector4()).toArray(),[0,0,1,1]);assert.deepEqual(r.api.getScissor(new THREE.Vector4()).toArray(),[0,0,1,1]);assert.equal(r.api.getScissorTest(),true);assert.equal(r.api.shadowMap.needsUpdate,true);
   if(fail)throw new Error('shadow render failed');
  });
  if(fail)assert.throws(()=>prepareVisualShadows(r.api,camera,scene,[mesh]),/shadow render failed/);else prepareVisualShadows(r.api,camera,scene,[mesh]);
@@ -35,4 +35,13 @@ test('shadow warmup disposes only cloned skeletons of real skinned assets',async
  const asset=await sourceGltf('quaternius/cube-world/Character_Female_1.gltf'),scene=new THREE.Scene();scene.add(new THREE.DirectionalLight());const originals=new Set<THREE.Skeleton>();asset.scene.traverse(o=>{if((o as THREE.SkinnedMesh).isSkinnedMesh)originals.add((o as THREE.SkinnedMesh).skeleton);});assert.ok(originals.size);let disposed=0,clones=0;
  const r=renderer(object=>object.traverse(o=>{const mesh=o as THREE.SkinnedMesh;if(mesh.isSkinnedMesh){clones++;assert.equal(originals.has(mesh.skeleton),false);mesh.skeleton.dispose=()=>disposed++;}}));
  prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[asset.scene]);assert.equal(disposed,clones);assert.ok(clones);r.check();assert.equal(asset.scene.parent,null);
+});
+for(const screen of [true,false])test(`warmup keeps ${screen?'screen':'offscreen'} program target and active attachment`,()=>{
+ const scene=new THREE.Scene(),sun=new THREE.DirectionalLight();sun.castShadow=true;scene.add(sun);
+ const mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());
+ const original=screen?null:new THREE.WebGLRenderTarget(8,8);let active:ReturnType<THREE.WebGLRenderer['getRenderTarget']>=original,face=2,level=3,calls=0;
+ const r=renderer(()=>{calls++;assert.equal(active,original);assert.equal(face,2);assert.equal(level,3);});
+ r.api.getRenderTarget=()=>active;r.api.getActiveCubeFace=()=>face;r.api.getActiveMipmapLevel=()=>level;
+ r.api.setRenderTarget=(target,f=0,l=0)=>{assert.equal(target,original);active=original;face=f;level=l;};
+ prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[mesh]);assert.equal(calls,1);assert.equal(active,original);assert.equal(face,2);assert.equal(level,3);
 });

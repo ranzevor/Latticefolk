@@ -285,3 +285,28 @@ test('bounded NPC conversation reaches the stationary player without getting stu
   await info.attach('npc-autonomous-approach-save',{body:Buffer.from(JSON.stringify({view,distance,utterance,revision:accepted.revision,npc:accepted.snapshot.homeNpcs?.find(n=>n.id==='ren')},null,2)),contentType:'application/json'});
   expect(errors).toEqual([]);
 });
+
+test('visual warmup prepares the displayed shader variant before the first visible draw',async({page},info)=>{
+ await page.route('**/__shader_preparation__',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body></body></html>'}));
+ await page.goto('/__shader_preparation__');
+ const result=await page.evaluate(async()=>{
+  const threeUrl='/node_modules/three/build/three.module.js',warmupUrl='/src/scene/visualPrograms.ts';
+  const THREE=await import(threeUrl) as typeof import('three');
+  const {prepareVisualPrograms,prepareVisualShadows}=await import(warmupUrl) as typeof import('../src/scene/visualPrograms.js');
+  const renderer=new THREE.WebGLRenderer();renderer.setSize(32,32);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(60,1,.1,100);camera.position.set(0,1,5);camera.lookAt(0,0,0);
+  const light=new THREE.DirectionalLight();light.position.set(2,3,4);light.castShadow=true;scene.add(light);
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());mesh.castShadow=true;mesh.receiveShadow=true;
+  const gl=renderer.getContext(),records:string[]=[];
+  const programLog=gl.getProgramInfoLog.bind(gl),shaderLog=gl.getShaderInfoLog.bind(gl);
+  gl.getProgramInfoLog=(program)=>{records.push('program');return programLog(program);};
+  gl.getShaderInfoLog=(shader)=>{records.push('shader');return shaderLog(shader);};
+  try{
+   await prepareVisualPrograms(renderer,camera,scene,[mesh]);prepareVisualShadows(renderer,camera,scene,[mesh]);
+   const warmed=records.length;scene.add(mesh);renderer.render(scene,camera);
+   return {warmed,firstVisibleDraw:records.slice(warmed),viewport:renderer.getViewport(new THREE.Vector4()).toArray(),scissorTest:renderer.getScissorTest()};
+  }finally{gl.getProgramInfoLog=programLog;gl.getShaderInfoLog=shaderLog;renderer.dispose();light.shadow.dispose();mesh.geometry.dispose();mesh.material.dispose();}
+ });
+ await info.attach('display-shader-warmup',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ expect(result.warmed).toBeGreaterThan(0);expect(result.firstVisibleDraw).toEqual([]);expect(result.viewport).toEqual([0,0,32,32]);expect(result.scissorTest).toBe(false);
+});
