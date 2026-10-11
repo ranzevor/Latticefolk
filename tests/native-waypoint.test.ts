@@ -266,3 +266,14 @@ test('an arrived position with unconsumed debt cannot pass at the deadline',asyn
   assert.equal(result.reached,false);assert.ok(result.distance<=.001);assert.equal(elapsed,2500);
   assert.equal((result as Result&{clock:{pendingSeconds:number}}).clock.pendingSeconds,.5);
 });
+
+for(const fixture of [
+ {name:'tool-contact entry',start:{x:0,z:11.6719},target:{x:5.2,z:4},actors:[],tolerance:.55,timeoutMs:45000,maxInputSeconds:3},
+ {name:'tool-contact traverse',start:{x:5.1652,z:3.9688},target:{x:13.95,z:3.4},actors:[],tolerance:.45,timeoutMs:45000,maxInputSeconds:3},
+ {name:'tool-contact final',start:{x:13.994,z:3.4164},target:{x:13.95,z:2.35},actors:[],tolerance:.28,timeoutMs:12000,maxInputSeconds:1}
+] satisfies Fixture[])for(const frameMs of [16,1000])test(`${fixture.name} retains its input budget at ${frameMs}ms frames`,async()=>{
+ const {result}=await replay(fixture,frameMs);
+ assert.equal(result.reached,true,JSON.stringify(result));assert.equal(result.stopReason,'reached');
+ assert.ok(result.inputSeconds!<=fixture.maxInputSeconds);assert.ok(result.distance<=fixture.tolerance);
+ assert.ok(result.elapsedMs!<=fixture.timeoutMs);
+});
