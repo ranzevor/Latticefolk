@@ -13,12 +13,13 @@ function expectation(value:any){return{
  toBeGreaterThanOrEqual:(expected:number)=>assert.ok(value>=expected),toBeLessThan:(expected:number)=>assert.ok(value<expected),
  toHaveAttribute:async(name:string,expected:string)=>assert.equal(value.attributes[name],expected)
 };}
-function fixture(){
+function fixture({deferContinue=false}={}){
+ const active=new Set<object>();
  const order:string[]=[],frame={},attributes:Record<string,string>={'data-persistence-revision':'7','data-persistence-conflict':'false'};
  const meta={day:4,minuteOfDay:800,weather:'rain',weatherEpoch:2};let stored={revision:7,snapshot:{meta}},handler:any;
  const page={url:()=> 'http://localhost:5173/',mainFrame:()=>frame,locator:()=>({attributes}),
   route:async(_url:string,value:any)=>{handler=value;order.push('route armed');},
-  unroute:async(_url:string,value:any)=>{assert.equal(value,handler);handler=undefined;order.push('route removed');}};
+  unroute:async(_url:string,value:any)=>{assert.equal(value,handler);assert.equal(active.size,0,'interception removed with active continuations');handler=undefined;order.push('route removed');}};
  const request={get:async()=>({ok:()=>true,json:async()=>stored})};
  function candidate({resourceType='fetch',requestFrame=frame,revision=8,expectedRevision=7,status=200}={}){
   const counters={continued:0,bodyReads:0,responseReads:0};let acknowledge!:()=>void;const sent=new Promise<void>(r=>{acknowledge=r;});
@@ -26,10 +27,10 @@ function fixture(){
   const outgoing={method:()=> 'POST',resourceType:()=>resourceType,frame:()=>requestFrame,
    postDataJSON:()=>{counters.bodyReads++;return{expectedRevision,snapshot:{meta}};},
    response:async()=>{counters.responseReads++;await sent;return response;}};
-  return{counters,outgoing,route:{request:()=>outgoing,continue:async()=>{counters.continued++;attributes['data-persistence-revision']=String(revision);stored={revision,snapshot:{meta}};acknowledge();}}};
+  return{counters,outgoing,route:{request:()=>outgoing,continue:async()=>{if(deferContinue){await Promise.resolve();await Promise.resolve();}counters.continued++;attributes['data-persistence-revision']=String(revision);stored={revision,snapshot:{meta}};acknowledge();}}};
  }
  const observer=new Function('expect',helperCode)(expectation);
- return{candidate,dispatch:(c:ReturnType<typeof candidate>)=>handler(c.route),observe:(start:()=>Promise<void>)=>observer(page,request,start),order,attributes};
+ return{candidate,dispatch:(c:ReturnType<typeof candidate>)=>{if(deferContinue)active.add(c.outgoing);const task=handler(c.route);task.then(()=>active.delete(c.outgoing),()=>active.delete(c.outgoing));return task;},observe:(start:()=>Promise<void>)=>observer(page,request,start),order,attributes};
 }
 for(const phase of ['initial','reloaded'])test(`${phase} autosave checkpoint keeps later ACK behind the exact revision assertion`,async()=>{
  const f=fixture(),first=f.candidate(),later=f.candidate({revision:9,expectedRevision:8});let laterDone!:Promise<void>;
@@ -56,4 +57,10 @@ test('native startup failure releases intercepted saves',async()=>{
  const f=fixture(),first=f.candidate(),later=f.candidate({revision:9,expectedRevision:8});let laterDone!:Promise<void>;
  await assert.rejects(f.observe(async()=>{await f.dispatch(first);laterDone=f.dispatch(later);throw new Error('startup failed');}),/startup failed/);
  await laterDone;assert.equal(later.counters.continued,1);assert.equal(f.order.at(-1),'route removed');
+});
+
+test('checkpoint drains deferred route continuations before disabling interception',async()=>{
+ const f=fixture({deferContinue:true}),first=f.candidate(),later=f.candidate({revision:9,expectedRevision:8});let laterDone!:Promise<void>;
+ const saved=await f.observe(async()=>{await f.dispatch(first);laterDone=f.dispatch(later);});
+ await laterDone;assert.equal(saved.revision,8);assert.equal(later.counters.continued,1);assert.equal(f.order.at(-1),'route removed');
 });

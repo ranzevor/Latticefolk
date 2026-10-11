@@ -20,13 +20,19 @@ async function nextBrowserAutosave(page:Page,request:APIRequestContext,start:()=
   let rejectRequest!:(error:Error)=>void;
   const checkpoint=new Promise<void>(resolve=>{release=resolve;});
   const captured=new Promise<Request>((resolve,reject)=>{resolveRequest=resolve;rejectRequest=reject;});
-  const route=async(intercepted:Route)=>{
+  const active=new Set<Promise<void>>();
+  const route=(intercepted:Route)=>{
+    const operation=(async()=>{
     const candidate=intercepted.request();
     if(candidate.method()==='POST'&&candidate.resourceType()==='fetch'&&candidate.frame()===page.mainFrame()){
       if(!selected){selected=candidate;resolveRequest(candidate);}
       else await checkpoint;
     }
     await intercepted.continue();
+    })();
+    active.add(operation);
+    operation.then(()=>active.delete(operation),()=>active.delete(operation));
+    return operation;
   };
   await page.route(url,route);
   const timer=setTimeout(()=>rejectRequest(new Error('No browser autosave issued at checkpoint')),45_000);
@@ -49,7 +55,9 @@ async function nextBrowserAutosave(page:Page,request:APIRequestContext,start:()=
     })(),start()]);
     return saved;
   }finally{
-    clearTimeout(timer);release();await page.unroute(url,route);
+    clearTimeout(timer);release();
+    try{await Promise.all([...active]);}
+    finally{await page.unroute(url,route);}
   }
 }
 

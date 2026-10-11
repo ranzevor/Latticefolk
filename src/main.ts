@@ -1,4 +1,4 @@
-import {prepareVisualPrograms} from './scene/visualPrograms';
+import {prepareVisualPrograms,prepareVisualShadows} from './scene/visualPrograms';
 import './style.css';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -801,10 +801,12 @@ class TownGame {
         const scene=await this.fbxLoader.loadAsync(assetUrl);
         if(key==='wellAsset')prepareWellGeometry(scene);
         await prepareVisualPrograms(this.renderer,this.camera,this.scene,[scene]);
+        prepareVisualShadows(this.renderer,this.camera,this.scene,[scene]);
         this.assets.set(key,{scene,animations:scene.animations||[]});
       }else{
         const gltf=await this.gltfLoader.loadAsync(assetUrl);
         await prepareVisualPrograms(this.renderer,this.camera,this.scene,[gltf.scene]);
+        prepareVisualShadows(this.renderer,this.camera,this.scene,[gltf.scene]);
         this.assets.set(key,{scene:gltf.scene,animations:gltf.animations});
       }
     }));
