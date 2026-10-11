@@ -33,13 +33,14 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
     type KeySample={type:string;code:string;eventAt:number;handledAt:number;trusted:boolean;state:State};
     type FrameSample={callbackAt:number;rafTimestamp:number;state:State};
     const root=window as unknown as {
-      __latticeNativePulse:(value:unknown)=>Promise<unknown>;
+      __latticeNativePulse:(value:unknown)=>Promise<{skipped?:boolean}>;
       __latticeNativeProbeRecord:(value:unknown)=>Promise<void>;
       nativeInputProbe:unknown;
     };
     let active=false,frame=0,sequence=0,routeId='',route:unknown,startedAt=0,startState:State|undefined;
     let keys:KeySample[]=[],frames:FrameSample[]=[],truncatedKeys=0,truncatedFrames=0;
     const held=new Set<string>();
+    const releases=new Map<string,KeySample>();
     const read=():State=>{
       const d=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
       return {x:Number(d?.playerX),z:Number(d?.playerZ),inputSeconds:Number(d?.playerInputSeconds),clock:JSON.parse(d?.simulationClock??'null'),focused:document.hasFocus(),hidden:document.hidden};
@@ -60,18 +61,25 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
     const key=(event:KeyboardEvent)=>{
       if(!active||!['KeyW','KeyA','KeyS','KeyD','ShiftLeft'].includes(event.code)||event.repeat)return;
       if(event.type==='keydown')held.add(event.code);else held.delete(event.code);
-      keys.push({type:event.type,code:event.code,eventAt:event.timeStamp,handledAt:performance.now(),trusted:event.isTrusted,state:read()});
+      const entry={type:event.type,code:event.code,eventAt:event.timeStamp,handledAt:performance.now(),trusted:event.isTrusted,state:read()};
+      keys.push(entry);
+      if(event.type==='keyup')releases.set(event.code,entry);
       if(keys.length>2048){keys.shift();truncatedKeys++;}
     };
     addEventListener('keydown',key);addEventListener('keyup',key);
     root.nativeInputProbe={
       start:(options:unknown)=>{
         routeId=`${performance.timeOrigin}:${++sequence}`;route=options;startedAt=performance.now();startState=boundaryState();
-        keys=[];frames=[];held.clear();truncatedKeys=0;truncatedFrames=0;active=true;frame=requestAnimationFrame(sample);
+        keys=[];frames=[];held.clear();releases.clear();truncatedKeys=0;truncatedFrames=0;active=true;frame=requestAnimationFrame(sample);
       },
-      pulse:(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>root.__latticeNativePulse({
-        ...request,routeId,browserIssuedAt:performance.timeOrigin+performance.now()
-      }),
+      pulse:async(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>{
+        const previous=request.codes.map(code=>releases.get(code));
+        const result=await root.__latticeNativePulse({...request,routeId,browserIssuedAt:performance.timeOrigin+performance.now()});
+        if(result.skipped)return {result};
+        const released=request.codes.map(code=>releases.get(code));
+        if(released.some((event,index)=>!event||!event.trusted||!Number.isFinite(event.eventAt)||event.eventAt<0||event===previous[index]))throw new Error('Native pulse has no trusted release event');
+        return {result,releasedEventAt:Math.max(...released.map(event=>event!.eventAt))};
+      },
       finish:async()=>{
         active=false;cancelAnimationFrame(frame);
         await root.__latticeNativeProbeRecord({routeId,route,browserTimeOrigin:performance.timeOrigin,startedAt,startState,

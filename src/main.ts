@@ -3952,6 +3952,7 @@ class TownGame {
     ui.world.dataset.playerZ=this.playerPosition.z.toFixed(4);
     ui.world.dataset.playerInputSeconds=String(this.playerInputSeconds);
     ui.world.dataset.simulationClock=JSON.stringify(this.simulationClock.diagnostics);
+    ui.world.dataset.simulationConsumedThrough=String(this.simulationClock.consumedThroughMs??'');
     ui.world.dataset.playerGroundingError=playerGroundingError.toFixed(5);
     ui.world.dataset.npcGroundingMaxError=npcGroundingMaxError.toFixed(5);
     ui.world.dataset.wildlifeGroundingMaxError=wildlifeGroundingMaxError.toFixed(5);

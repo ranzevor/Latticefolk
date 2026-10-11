@@ -16,6 +16,8 @@ type ResetReason='none'|'suspended'|'invalid-time'|'input-overflow';
 
 export class SimulationClock {
   private sampledAt?:number;
+  private advancedThroughMs?:number;
+  get consumedThroughMs(){return this.advancedThroughMs;}
   private lastFrameAt?:number;
   private lastAnimationAt?:number;
   private input?:PlayerMovementInput;
@@ -23,7 +25,7 @@ export class SimulationClock {
   readonly diagnostics={elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,inputOverflowCount:0,resetReason:'none' as ResetReason};
 
   reset(reason:ResetReason='suspended') {
-    this.sampledAt=undefined;this.lastFrameAt=undefined;this.lastAnimationAt=undefined;
+    this.sampledAt=undefined;this.advancedThroughMs=undefined;this.lastFrameAt=undefined;this.lastAnimationAt=undefined;
     this.clearInput();
     Object.assign(this.diagnostics,{elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,resetReason:reason});
   }
@@ -73,7 +75,7 @@ export class SimulationClock {
     if(!Number.isFinite(at)||at<0||!Number.isFinite(handledAt)||at>handledAt||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(this.changes.at(-1)?.at??0)>handledAt){
       this.reset('invalid-time');return false;
     }
-    if(this.sampledAt===undefined){this.sampledAt=at;this.lastFrameAt=at;return true;}
+    if(this.sampledAt===undefined){this.sampledAt=at;this.lastFrameAt=at;this.advancedThroughMs=at;return true;}
     const endAt=Math.min(at,this.sampledAt+SIMULATION_MAX_ADVANCE_MS);
     Object.assign(this.diagnostics,{elapsedSeconds:(at-this.lastFrameAt!)/1000,simulatedSeconds:0,pendingSeconds:(at-endAt)/1000,steps:0,resetReason:'none'});
     this.lastFrameAt=at;
@@ -88,7 +90,7 @@ export class SimulationClock {
       cursor=end;
     }
     while(index<this.changes.length&&this.changes[index].at<=endAt)this.input=this.changes[index++].input;
-    this.changes.splice(0,index);this.sampledAt=endAt;return true;
+    this.changes.splice(0,index);this.sampledAt=endAt;this.advancedThroughMs=endAt;return true;
   }
 
   private sameInput(a:PlayerMovementInput|undefined,b:PlayerMovementInput|undefined){

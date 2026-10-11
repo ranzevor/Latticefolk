@@ -23,3 +23,26 @@ for(const mode of ['normal','late-frame','debt','invalid','not-entered'] as cons
  if(mode==='normal')assert.equal(pulses[1].codes.join(','),'ShiftLeft,KeyA');
  assert.equal(notified,Number(mode==='normal'));assert.equal(finished,1);assert.equal(observers.size,0);assert.equal(timers.size,0);
 });
+
+for(const mode of ['consumed','partial','late'] as const)test(`coarse native release ${mode} uses the unchanged leg deadline`,async()=>{
+  let time=0,frames=0,id=0,legs=0,notified=0;
+  const observers=new Set<()=>void>(),timers=new Map<number,()=>void>();
+  const world={dataset:{coarseRequestTimeouts:'0',coarseDecidedChunks:'8',coarseLastBatchSize:'8',materializedChunks:'0',simulationClock:'{"pendingSeconds":0}',simulationConsumedThrough:'0'}};
+  const context={performance:{now:()=>time,timeOrigin:10000},document:{querySelector:()=>world},
+    window:{nativeInputProbe:{start(){},async pulse(){
+      legs++;time+=mode==='late'?2600:1200;
+      world.dataset.materializedChunks=legs===1?'1':'0';
+      world.dataset.simulationConsumedThrough=String(time-(mode==='partial'?600:100));
+      return {releasedEventAt:time-500};
+    },async finish(){}},async notifyCoarseTransitionExited(){notified++;}},
+    MutationObserver:class {fn:()=>void;constructor(fn:()=>void){this.fn=fn;}observe(){observers.add(this.fn);}disconnect(){observers.delete(this.fn);}},
+    setTimeout:(fn:()=>void)=>{timers.set(++id,fn);return id;},clearTimeout:(n:number)=>timers.delete(n),cancelAnimationFrame(){},
+    requestAnimationFrame:(fn:(at:number)=>void)=>{const n=++id;setImmediate(()=>{
+      frames++;time+=16;world.dataset.simulationConsumedThrough=String(time);
+      for(const notify of observers)notify();fn(time);
+    });return n;}};
+  const result=await vm.runInNewContext(callback,context)();
+  assert.equal(result.entered,mode!=='late');assert.equal(result.exited,mode!=='late');
+  assert.equal(legs,mode==='late'?1:2);assert.equal(notified,mode==='late'?0:1);
+  assert.equal(frames,mode==='partial'?2:0);assert.equal(observers.size,0);assert.equal(timers.size,0);
+});

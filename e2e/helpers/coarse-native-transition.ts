@@ -6,8 +6,14 @@ export async function crossCoarseBoundary() {
   const startedAt=performance.now(),materialized=()=>Number(world.dataset.materializedChunks);
   const leg=async(code:string,predicate:()=>boolean)=>{
     const deadline=performance.now()+2500;
-    await probe.pulse({codes:['ShiftLeft',code],durationMs:200,deadlineEpochMs:performance.timeOrigin+deadline});
+    const release=await probe.pulse({codes:['ShiftLeft',code],durationMs:200,deadlineEpochMs:performance.timeOrigin+deadline}) as {releasedEventAt?:number}|undefined;
     if(performance.now()>=deadline)return false;
+    const consumedRelease=()=>{
+      const raw=world.dataset.simulationConsumedThrough,consumed=raw?.trim()?Number(raw):NaN;
+      return typeof release?.releasedEventAt==='number'&&Number.isFinite(release.releasedEventAt)&&release.releasedEventAt>=0&&Number.isFinite(consumed)&&consumed>=release.releasedEventAt;
+    };
+    const initialClock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
+    if(consumedRelease()&&initialClock?.pendingSeconds===0)return predicate();
     return new Promise<boolean>((resolve,reject)=>{
       const releasedAt=performance.now();let refreshed=false,frame=0,settled=false;
       const observer=new MutationObserver(()=>{refreshed=true;});observer.observe(world,{attributes:true,attributeFilter:['data-simulation-clock']});
@@ -18,7 +24,7 @@ export async function crossCoarseBoundary() {
           const clock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
           if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Coarse transition clock is unavailable');
           if(performance.now()>=deadline){finish(false);return;}
-          if(refreshed&&at>=releasedAt&&clock.pendingSeconds===0){finish(predicate());return;}
+          if((release?.releasedEventAt!==undefined?consumedRelease():(refreshed&&at>=releasedAt))&&clock.pendingSeconds===0){finish(predicate());return;}
           refreshed=false;frame=requestAnimationFrame(sample);
         }catch(error){finish(false,error as Error);}
       };

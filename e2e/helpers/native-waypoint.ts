@@ -258,15 +258,24 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
         deadline-performance.now(),(maxInputSeconds===undefined?Infinity:maxInputSeconds-inputSeconds)*1000);
       if(!(pulseMs>0)||!Number.isFinite(pulseMs))throw new Error('Waypoint cannot issue a finite direction pulse');
       lastInput=next;
-      if(probe)await probe.pulse({codes:[...next],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
+      let release:unknown;
+      if(probe)release=await probe.pulse({codes:[...next],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
       else {
         setHeld(next);
         await new Promise<void>(resolve=>setTimeout(()=>{setHeld(new Set());resolve();},pulseMs));
       }
+      if(probe&&performance.now()>deadline)break;
       if(probe){
         await new Promise<void>((resolve,reject)=>{
           const world=document.querySelector<HTMLElement>('#worldStatus');
           if(!world){reject(new Error('Waypoint clock observation is unavailable'));return;}
+          const releasedEventAt=(release as {releasedEventAt?:number}|undefined)?.releasedEventAt;
+          const consumedRelease=()=>{
+            const raw=world.dataset.simulationConsumedThrough,consumed=raw?.trim()?Number(raw):NaN;
+            return typeof releasedEventAt==='number'&&Number.isFinite(releasedEventAt)&&releasedEventAt>=0&&Number.isFinite(consumed)&&consumed>=releasedEventAt;
+          };
+          const initialClock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
+          if(consumedRelease()&&initialClock?.pendingSeconds===0){resolve();return;}
           const releasedAt=performance.now();let refreshed=false,frame=0,settled=false;
           const observer=new MutationObserver(()=>{refreshed=true;});
           observer.observe(world,{attributes:true,attributeFilter:['data-simulation-clock']});
@@ -276,7 +285,7 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
             try{
               const clock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
               if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-              if(refreshed&&frameAt>=releasedAt&&clock.pendingSeconds===0){finish();return;}
+              if((releasedEventAt!==undefined?consumedRelease():(refreshed&&frameAt>=releasedAt))&&clock.pendingSeconds===0){finish();return;}
               refreshed=false;frame=requestAnimationFrame(sample);
             }catch(error){finish(error as Error);}
           };
