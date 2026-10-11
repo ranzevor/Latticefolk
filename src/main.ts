@@ -3302,7 +3302,12 @@ class TownGame {
     const isOvenWork=isBakingOven(obj.state)&&(task.action==='work'||task.action==='craft');
     if(isOvenWork){
       task.approach=bakingWorkApproach(agent.characterAsset,obj.state.position,obj.mesh.userData.ovenPhysics?.collider,
-        (point,radius)=>this.physics.isBlocked(point.x,point.z,radius));
+        (point,radius)=>this.physics.isBlocked(point.x,point.z,radius)||[...this.npcs.values()].some(other=>{
+          if(other===agent||other.removed)return false;
+          const occupied=dist(point,other.mesh.position)<radius+NPC_BODY_RADIUS;
+          const reserved=other.task?.approach;
+          return occupied||Boolean(reserved&&dist(point,reserved)<radius+NPC_BODY_RADIUS);
+        }));
       // No loaded/reachable facility stance means no work outcome, not crafting at
       // an arbitrary nearby point merely because pathfinding returned an empty path.
       if(!task.approach){agent.task=undefined;agent.path=[];agent.pathIndex=0;return;}
