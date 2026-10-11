@@ -1,3 +1,4 @@
+import * as npcContinuation from '../src/world/actorContinuation.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -44,7 +45,7 @@ const code=ts.transpileModule(`return class Runtime {objects=new Map();${members
 function fixture(snapshot:WorldPersistenceSnapshot|null=null,realActors=false){
   const io={snapshot,gets:0,writes:0,beacons:0,epoch:Date.now(),store:undefined as WorldPersistence|undefined,writeGate:undefined as Promise<void>|undefined};
   const document=new JSDOM('<div id="speech"></div>').window.document;
-  const deps={...worldRandom,document,ui:{speechLayer:document.querySelector('#speech')},StreamedActors,Date:{now:()=>io.epoch},navigator:{sendBeacon(){io.beacons++;return true;}},THREE,...layouts,...units,...movable,...portable,...baking,...water,...trees,...crops,playerHeadClearance,NPC_BODY_RADIUS,StreamedPresentation,planFineChunk,registerFineTerrainForChunk,restoreBuildingForLayout,droppedParcelSpec,
+  const deps={...npcContinuation,...worldRandom,document,ui:{speechLayer:document.querySelector('#speech')},StreamedActors,Date:{now:()=>io.epoch},navigator:{sendBeacon(){io.beacons++;return true;}},THREE,...layouts,...units,...movable,...portable,...baking,...water,...trees,...crops,playerHeadClearance,NPC_BODY_RADIUS,StreamedPresentation,planFineChunk,registerFineTerrainForChunk,restoreBuildingForLayout,droppedParcelSpec,
     clamp:(x:number,a:number,b:number)=>Math.max(a,Math.min(b,x)),now:()=>1000,i18n:{t:(key:string)=>key},fetch:async(_url:string,init?:{method?:string;body?:string})=>{
       if(init?.method==='POST'){io.writes++;const data=JSON.parse(init.body!);if(io.writeGate)await io.writeGate;const saved=io.store!.save(data.snapshot,data.expectedRevision);return{ok:true,status:200,json:async()=>saved};}
       io.gets++;return{ok:true,json:async()=>({revision:io.store?.revision()??3,snapshot:io.store?.load()??io.snapshot})};
@@ -305,3 +306,4 @@ test('unvisited owners do not seed preview NPCs and departed units release only 
   assert.equal(r.streamedNpcs.get(actor.state.id)===undefined,true);assert.equal(actor.mesh.parent,null);assert.equal(actor.nameEl.isConnected,false);
   assert.equal(r.visualTargets.some((x:any)=>x.group===actor.mesh),false);assert.ok(r.fineChunkCache.get(cell.id).npcStates.some((x:any)=>x.id===actor.state.id));
 });
+

@@ -1,4 +1,6 @@
-import {test,expect,type APIRequestContext,type Page,type Request} from '@playwright/test';
+import {type Request} from '@playwright/test';
+import {test,expect,type APIRequestContext,type Page} from './helpers/native-input-probe.js';
+import {driveNativeWaypoint} from './helpers/native-waypoint.js';
 import type {CoarseChunkState,NpcState,WildlifeDecisionBatchRequest,WildlifeState,WorldPersistenceSnapshot} from '../src/types.js';
 import {startFirstPerson} from './helpers/native-start.js';
 
@@ -26,9 +28,10 @@ async function autosave(page:Page,request:APIRequestContext){
   const stored=await readWorld(request);expect(stored.revision).toBe(revision);
   return{snapshot:submitted.snapshot,stored:stored.snapshot,revision};
 }
-async function nativeCrossing(page:Page,key:'KeyA'|'KeyD',crossed:(x:number)=>boolean){
-  try{await page.keyboard.down(key);await expect.poll(async()=>crossed(Number(await status(page).getAttribute('data-player-x'))),{timeout:8000,intervals:[50]}).toBe(true);}
-  finally{await page.keyboard.up(key);}
+async function nativeCrossing(page:Page,x:number,crossed:(x:number)=>boolean){
+  const result=await page.evaluate(driveNativeWaypoint,{target:{x,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
+  console.info('late-wildlife-crossing',JSON.stringify(result));
+  expect(result.reached).toBe(true);expect(crossed(result.x)).toBe(true);
 }
 
 test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.setItem('latticefolk.locale','en'));});
@@ -119,8 +122,9 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
   try{
     await page.goto('/',{waitUntil:'domcontentloaded'});await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
     await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);
-    await nativeCrossing(page,'KeyA',x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
-    await nativeCrossing(page,'KeyD',x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await nativeCrossing(page,35.2,x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
+    await nativeCrossing(page,37.2,x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await expect.poll(()=>status(page).evaluate(el=>(JSON.parse((el as HTMLElement).dataset.streamedLayouts||'[]') as {fineOwners:string[]}[]).flatMap(unit=>unit.fineOwners))).toEqual([chunk.id]);
     await expect.poll(()=>status(page).evaluate(el=>JSON.parse((el as HTMLElement).dataset.wildlifeVisuals||'[]').some((x:{id:string})=>x.id==='rabbit_rng'))).toBe(true);
     release();await finished;const reply=await captured!.response();expect(reply?.status()).toBe(200);expect(await reply!.finished()).toBeNull();
     await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
@@ -129,4 +133,23 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     expect(saved.snapshot.fineChunks.find(f=>f.chunkId===chunk.id)!.wildlifeStates!.find(w=>w.id===rabbit.id)).toMatchObject({randomEventCursor:17,currentAction:'rest'});
     await info.attach('late-wildlife-state',{body:Buffer.from(JSON.stringify({revision:saved.revision,state:current})),contentType:'application/json'});
   }finally{release();}
+});
+
+
+test('restored patrol completes once and a second reload does not repeat its reward',async({page,request},info)=>{
+  test.setTimeout(110_000);
+  const seed=snapshot('e2e-accepted-patrol');
+  seed.homeNpcs=[{id:'yui',name:'Yui',role:'maker',position:{x:-18,z:6},home:{x:-21,z:12},mood:'calm',hunger:20,energy:80,social:50,money:123,
+    inventory:[],relationships:{},memories:[],currentAction:'patrol',goal:'live',lastDecisionAt:0,randomEventCursor:23,
+    continuation:{version:1,path:[],nextDecisionInMs:120_000,task:{action:'patrol',elapsedMs:5000}}}];
+  await seedWorld(request,seed);
+  await page.route('**/api/decision',route=>route.fulfill({json:idle}));
+  await page.goto('/',{waitUntil:'domcontentloaded'});await startFirstPerson(page);
+  const first=await autosave(page,request),actor=first.stored.homeNpcs.find(n=>n.id==='yui')!;
+  expect(actor.money).toBe(124);expect(actor.randomEventCursor).toBe(23);expect(actor.continuation).toBeDefined();
+  expect(actor.continuation!.task).toBeUndefined();expect(actor.continuation!.path).toEqual([]);
+  await page.reload();await startFirstPerson(page);
+  const second=await autosave(page,request),again=second.stored.homeNpcs.find(n=>n.id==='yui')!;
+  expect(again.money).toBe(124);expect(again.randomEventCursor).toBe(23);expect(again.continuation!.task).toBeUndefined();
+  await info.attach('restored-patrol-checkpoints',{body:Buffer.from(JSON.stringify({first:{revision:first.revision,actor},second:{revision:second.revision,actor:again}})),contentType:'application/json'});
 });

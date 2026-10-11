@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 // These groups balance observed completion windows, not measured parallel run times.
 // Check discovery without a browser: node scripts/run-e2e-group.mjs --list-only
 const groups = {
-  A: ['baking-oven', 'environment-presentation', 'playable-smoke', 'weather-persistence'],
+  A: ['baking-oven', 'environment-presentation', 'playable-smoke', 'player-input-clock', 'weather-persistence'],
   B: ['coarse-presentation', 'npc-baking-stance', 'portable-objects', 'semantic-furniture',
     'visible-well', 'water-patch', 'wildlife-presentation', 'world-randomness']
 };

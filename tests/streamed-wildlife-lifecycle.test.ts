@@ -1,3 +1,4 @@
+import * as npcContinuation from '../src/world/actorContinuation.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ assert.equal(members.length,names.size);
 const code=ts.transpileModule(`return class Runtime {${members.join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const fine=(chunkId:string)=>({chunkId,wildlifeIds:[] as string[],initialWildlifeIds:new Set<string>(),fixedWildlifeWeights:new Map(),initialWildlifeCounts:{} as Record<string,number>,groups:[]});
 function fixture(){
- const deps={...worldRandom,THREE,clamp:(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n)),...migration,normalizeWildlifePhenotype,wildlifeFunctionalPhenotype,normalizeWildlifeOrganismGenome,normalizeWildlifeDomestication,now:()=>1000,i18n:{t:(x:string)=>x}};
+ const deps={...npcContinuation,...worldRandom,THREE,clamp:(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n)),...migration,normalizeWildlifePhenotype,wildlifeFunctionalPhenotype,normalizeWildlifeOrganismGenome,normalizeWildlifeDomestication,now:()=>1000,i18n:{t:(x:string)=>x}};
  const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps)),r=new Runtime();
  const source={id:'chunk_2_0',cx:2,cz:0,biome:'plains',wildlife:[{species:'sheep',count:10,carryingCapacity:20,diseaseLoad:0}]};
  const target={id:'chunk_3_0',cx:3,cz:0,biome:'plains',wildlife:[{species:'sheep',count:2,carryingCapacity:20,diseaseLoad:0}]};
@@ -60,3 +61,4 @@ test('a deferred visual leaving the visible owners releases once without removin
  const transfer=r.wildlifeTransfers.get(actor.state.id);r.streamedWildlife.retain(new Set(),r.wildlife);r.streamedWildlife.retain(new Set(),r.wildlife);
  assert.equal(actor.mesh.parent,null);assert.equal(r.wildlifeTransfers.get(actor.state.id),transfer);assert.deepEqual(releases,[actor.state.id]);
 });
+

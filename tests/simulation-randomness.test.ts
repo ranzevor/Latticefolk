@@ -1,3 +1,5 @@
+import {SimulationClock,isPlayerMovementKey} from '../src/world/simulationClock.js';
+import * as npcContinuation from '../src/world/actorContinuation.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -25,7 +27,7 @@ import type {DecisionResponse,NpcState,WildlifeState,WorldPersistenceSnapshot} f
 // Run the production methods; presentation and external IO are the only stubs.
 const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
-const wanted=new Set(['createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
+const wanted=new Set(['createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
 const members:string[]=[];
 for(const node of ast.statements)if(ts.isClassDeclaration(node)&&node.name?.text==='TownGame')for(const member of node.members)if(ts.isMethodDeclaration(member)&&wanted.has(member.name.getText(ast)))members.push(member.getText(ast));
 assert.equal(members.length,wanted.size);
@@ -35,24 +37,24 @@ const npc=(patch:Partial<NpcState>={}):NpcState=>({id:'n',name:'N',role:'maker',
 const wildlife=(patch:Partial<WildlifeState>={}):WildlifeState=>({id:'w',chunkId:'chunk_2_0',species:'rabbit',position:{x:48,z:0},ageDays:60,health:90,hunger:20,thirst:20,energy:80,sex:'female',generation:0,traits:{speed:2,size:.6,fertility:.8,wariness:.7},currentAction:'rest',lastDecisionAt:0,birthDay:1,randomEventCursor:17,...patch});
 const decision=(action:DecisionResponse['action']):DecisionResponse=>({action,commitment:2,confidence:1,source:'fallback',stateShift:'stable',reasonCode:'routine'});
 const npcRuntime=(state=npc())=>({state,mesh:new THREE.Group(),characterAsset:'female1',path:[],pathIndex:0,nextDecisionAt:0,pendingDecision:false,speechEl:{remove(){},classList:{add(){}}},nameEl:{remove(){},classList:{add(){}}}});
-const animalRuntime=(state=wildlife())=>({state,mesh:new THREE.Group(),path:[],pathIndex:0,nextDecisionAt:0,actionResolved:false});
+const animalRuntime=(state=wildlife())=>({state,mesh:new THREE.Group(),path:[] as {x:number;z:number}[],pathIndex:0,nextDecisionAt:0,actionResolved:false});
 const chunkRuntime=(chunkId:string)=>({chunkId,npcIds:[] as string[],objectIds:[] as string[],wildlifeIds:[] as string[],initialWildlifeCounts:{},initialWildlifeIds:new Set(),fixedWildlifeWeights:new Map(),groups:[],initialMetrics:metrics()});
 function fixture(seed=random.DEFAULT_WORLD_SEED){
   const io={clock:1000,snapshot:null as WorldPersistenceSnapshot|null,requests:[] as string[],beacons:[] as Blob[],reply:null as any,wait:undefined as Promise<any>|undefined,failed:false,logs:[] as string[],signals:[] as AbortSignal[],timers:new Map<number,{callback:()=>void;delay:number}>(),nextTimer:0};
   const input=new EventTarget(),elements=new Map<string,EventTarget>();
   const element=(selector:string)=>{let target=elements.get(selector);if(!target){target=new EventTarget();elements.set(selector,target);}return target;};
-  const hidden=new Set<string>();const overlay={classList:{add:(name:string)=>hidden.add(name),remove:(name:string)=>hidden.delete(name)}};
+  const hidden=new Set<string>();const overlay={classList:{contains:(name:string)=>hidden.has(name),add:(name:string)=>hidden.add(name),remove:(name:string)=>hidden.delete(name)}};
   const controls=Object.assign(new EventTarget(),{isLocked:false,lock(this:EventTarget&{isLocked:boolean}){this.isLocked=true;this.dispatchEvent(new Event('lock'));}});
   const math=Object.create(Math);math.random=()=>{throw new Error('ambient Math.random');};
   const fetch=async(url:string,init?:RequestInit)=>{io.requests.push(url);if(init?.signal)io.signals.push(init.signal);if(io.failed)throw Error('offline');if(io.wait)return io.wait;return {ok:true,json:async()=>url==='/api/world/state'?{snapshot:io.snapshot,revision:4}:io.reply};};
-  const deps={...layouts,StreamedActors,playerHeadClearance,NPC_BODY_RADIUS,isGodCameraInputKey,...random,...phenotype,...organisms,...domestication,...migration,...species,THREE,CoarseWorldRuntime,planFineChunk,registerFineTerrainForChunk,restoredPlayerPosition,restoreBuildingForLayout,isBakingOven,Math:math,
+  const deps={...npcContinuation,isPlayerMovementKey,...layouts,StreamedActors,playerHeadClearance,NPC_BODY_RADIUS,isGodCameraInputKey,...random,...phenotype,...organisms,...domestication,...migration,...species,THREE,CoarseWorldRuntime,planFineChunk,registerFineTerrainForChunk,restoredPlayerPosition,restoreBuildingForLayout,isBakingOven,Math:math,
     setTimeout:(callback:()=>void,delay:number)=>{const id=++io.nextTimer;io.timers.set(id,{callback,delay});return id;},clearTimeout:(id:number)=>io.timers.delete(id),
     now:()=>io.clock,Date:{now:()=>2000},clamp:(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n)),dist:(a:any,b:any)=>Math.hypot(a.x-b.x,a.z-b.z),fetch,
     i18n:{t:(key:string,values?:{error?:string})=>values?.error?`${key}: ${values.error}`:key},navigator:{sendBeacon:(_url:string,body:Blob)=>{io.beacons.push(body);return true;}},
-    window:{clearTimeout:(id:number)=>io.timers.delete(id)},document:{addEventListener:input.addEventListener.bind(input),createElement:()=>({className:'',remove(){},classList:{add(){}}}),querySelector:element,querySelectorAll:()=>[]},addEventListener:input.addEventListener.bind(input),ui:{speechLayer:{appendChild(){}},modeBtn:element('mode'),localeSelect:element('locale'),overlay}};
+    window:{clearTimeout:(id:number)=>io.timers.delete(id)},document:{hidden:false,hasFocus:()=>true,addEventListener:input.addEventListener.bind(input),createElement:()=>({className:'',remove(){},classList:{add(){}}}),querySelector:element,querySelectorAll:()=>[]},addEventListener:input.addEventListener.bind(input),ui:{admin:{classList:{contains:()=>true}},speechLayer:{appendChild(){}},modeBtn:element('mode'),localeSelect:element('locale'),overlay}};
   const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps));const runtime=new Runtime() as Record<string,any>;
   Object.assign(runtime,{streamedLayouts:new layouts.StreamedLayoutRegistry(seed),streamedNpcs:new StreamedActors<any>(a=>a.mesh.removeFromParent()),streamedWildlife:new StreamedActors<any>(a=>a.mesh.removeFromParent()),
-    streamedPresentation:{activate:()=>[],deactivate(){},has:()=>false},resetGodCameraInput(){},keys:new Set(),controls,renderer:{domElement:element('canvas')},randomness:{version:1,seed},scene:new THREE.Scene(),camera:new THREE.PerspectiveCamera(),sun:{intensity:0},ambient:{intensity:0},day:4,minuteOfDay:800,weather:'cloudy',weatherEpoch:2,
+    streamedPresentation:{activate:()=>[],deactivate(){},has:()=>false},resetGodCameraInput(){},simulationClock:new SimulationClock(),keys:new Set(),controls,renderer:{domElement:element('canvas')},randomness:{version:1,seed},scene:new THREE.Scene(),camera:new THREE.PerspectiveCamera(),sun:{intensity:0},ambient:{intensity:0},day:4,minuteOfDay:800,weather:'cloudy',weatherEpoch:2,
     playerPosition:{x:0,z:7},playerInventory:{apple:0,bread:1,wood:0,coin:10,flower:0,grain:0,flour:0,water:0,stone:0,plank:0,tool:0},cameraMode:'firstPerson',perceptionEpoch:0,inFlight:0,
     npcs:new Map(),wildlife:new Map(),objects:new Map(),fineChunkCache:new Map(),materializedChunks:new Map(),wildlifeLineage:new Map(),wildlifeTransfers:new Map(),lineageEpoch:0,visualTargets:[],physics:new FinePhysicsAuthority(),
     coarseWorld:{chunks:new Map(),chunkSize:24,restoreKnownChunks(){},ensureWindowAround(){},setMaterialized(){},applyFineSummary(){},chunkAtWorld(){return undefined;}},
@@ -314,4 +316,50 @@ test('inactive known visuals never initialize a wake or advance their saved curs
  const npcView=f.runtime.createFineNpcVisual(n,'female1'),animalView=f.runtime.createWildlifeVisual(w);
  for(const view of [npcView,animalView]){assert.equal(view.removed,true);assert.equal(view.nextDecisionAt,Infinity);}
  assert.deepEqual([n,w],before);assert.equal(f.runtime.npcs.size,0);assert.equal(f.runtime.wildlife.size,0);assert.equal(f.runtime.wildlifeLineage.size,0);
+});
+
+
+test('accepted NPC task and remaining path survive a checkpoint at a different runtime clock',()=>{
+  const live=fixture(),restored=fixture();live.runtime.setupNpcs();restored.runtime.setupNpcs();
+  const actor=live.runtime.npcs.get('yui');
+  actor.task={action:'patrol',startedAt:400};actor.path=[{x:0,z:0},{x:4,z:3},{x:7,z:3}];actor.pathIndex=1;actor.nextDecisionAt=6400;
+  actor.state.currentAction='patrol';actor.state.randomEventCursor=23;
+  const snapshot=JSON.parse(JSON.stringify(live.runtime.buildWorldSnapshot()));
+  restored.io.clock=90000;restored.runtime.restoreWorldState(snapshot);const again=restored.runtime.npcs.get('yui');
+  assert.deepEqual(again.path,actor.path.slice(actor.pathIndex));assert.equal(again.pathIndex,0);
+  assert.deepEqual(again.task,{action:'patrol',startedAt:89400});
+  assert.equal(again.nextDecisionAt-restored.io.clock,actor.nextDecisionAt-live.io.clock);
+  assert.equal(again.state.randomEventCursor,23);
+  const money=actor.state.money;
+  live.runtime.completeTask(actor);restored.runtime.completeTask(again);
+  assert.equal(actor.state.money,money+1);assert.deepEqual(stableState(again.state),stableState(actor.state));
+  restored.runtime.completeTask(again);assert.equal(again.state.money,money+1);
+});
+
+test('fine NPC collapse preserves the accepted task without redrawing its event cursor',()=>{
+  const f=fixture(),state=npc({chunkId:'chunk_2_0',currentAction:'explore'});f.runtime.spawnFineNpc(state,'female1');
+  const actor=f.runtime.npcs.get(state.id),chunk=chunkRuntime(state.chunkId!);chunk.npcIds=[state.id];f.runtime.materializedChunks.set(state.chunkId,chunk);
+  actor.path=[{x:9,z:2}];actor.task={action:'explore',startedAt:200};actor.nextDecisionAt=6000;
+  f.runtime.collapseFineChunk(state.chunkId);const stored=f.runtime.fineChunkCache.get(state.chunkId).npcStates[0];
+  f.io.clock=70000;f.runtime.spawnFineNpc(JSON.parse(JSON.stringify(stored)),'female1');const restored=f.runtime.npcs.get(state.id);
+  assert.deepEqual(restored.path,[{x:9,z:2}]);assert.deepEqual(restored.task,{action:'explore',startedAt:69200});
+  assert.equal(restored.nextDecisionAt,75000);assert.equal(restored.state.randomEventCursor,11);
+});
+
+test('fine wildlife snapshot retains an unresolved accepted action, path, speed and deadline',()=>{
+  const f=fixture(),a=animalRuntime(wildlife({currentAction:'wander'})),chunk=chunkRuntime('chunk_2_0');
+  a.path=[{x:49,z:1},{x:52,z:2}];a.pathIndex=1;a.nextDecisionAt=7500;Object.assign(a,{controllerSpeed:1.3});
+  chunk.wildlifeIds=[a.state.id];f.runtime.wildlife.set(a.state.id,a);f.runtime.materializedChunks.set(chunk.chunkId,chunk);
+  const saved=JSON.parse(JSON.stringify(f.runtime.buildWorldSnapshot())).fineChunks[0].wildlifeStates[0];
+  const restored=fixture();restored.io.clock=80000;restored.runtime.spawnWildlife(saved);const again=restored.runtime.wildlife.get(a.state.id);
+  assert.deepEqual(again.path,[{x:52,z:2}]);assert.equal(again.pathIndex,0);assert.equal(again.actionResolved,false);
+  assert.equal(again.controllerSpeed,1.3);assert.equal(again.nextDecisionAt,86500);assert.equal(again.state.randomEventCursor,17);
+});
+
+test('final home checkpoint keeps a committed patrol task without advancing the cursor',()=>{
+  const live=fixture(),restored=fixture();live.runtime.setupNpcs();restored.runtime.setupNpcs();const a=live.runtime.npcs.get('yui');
+  a.task={action:'patrol',startedAt:800};a.path=[{x:3,z:2}];a.nextDecisionAt=2000;a.state.currentAction='patrol';
+  const before=structuredClone(a.state),saved=JSON.parse(JSON.stringify(live.runtime.buildFinalWorldSnapshot()));
+  assert.deepEqual(a.state,before);restored.runtime.restoreWorldState(saved);const b=restored.runtime.npcs.get('yui');
+  assert.deepEqual(b.task,a.task);assert.deepEqual(b.path,a.path);assert.equal(b.nextDecisionAt,a.nextDecisionAt);
 });

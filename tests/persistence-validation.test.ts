@@ -564,3 +564,37 @@ test('corrupt streamed layout identifies its stored row and cannot be overwritte
     assert.throws(()=>store.save(snapshot,1));assert.deepEqual(logicalTables(file),before);
   }finally{db.close();store.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('actor continuations survive SQLite close and reopen without changing event cursors',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'actor-continuation-'));
+  const file=path.join(directory,'world.sqlite');let store=new WorldPersistence(file);
+  try{
+    const snapshot=validSnapshot(),npc=snapshot.fineChunks[0].npcStates[0],animal=snapshot.fineChunks[0].wildlifeStates![0];
+    npc.randomEventCursor=23;npc.continuation={version:1,path:[{x:49,z:1}],nextDecisionInMs:6400,task:{action:'work',targetObjectId:'fine_crate',elapsedMs:1200}};
+    animal.randomEventCursor=31;animal.continuation={version:1,path:[{x:50,z:2}],nextDecisionInMs:8300,actionResolved:false,controllerSpeed:.7};
+    saveCurrent(store,snapshot);store.close();store=new WorldPersistence(file);
+    const restored=store.load()!;
+    assert.deepEqual(restored.fineChunks[0].npcStates[0].continuation,npc.continuation);
+    assert.deepEqual(restored.fineChunks[0].wildlifeStates![0].continuation,animal.continuation);
+    assert.equal(restored.fineChunks[0].npcStates[0].randomEventCursor,23);
+    assert.equal(restored.fineChunks[0].wildlifeStates![0].randomEventCursor,31);
+  }finally{store.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('malformed actor continuation payloads are rejected before the SQLite revision changes',()=>{
+  const store=new WorldPersistence(':memory:');
+  const bad=[null,{version:2,path:[],nextDecisionInMs:0},{version:1,path:[{x:NaN,z:0}],nextDecisionInMs:0},
+    {version:1,path:[],nextDecisionInMs:-1},{version:1,path:[],nextDecisionInMs:0,task:{action:'grant_money',elapsedMs:0}},
+    {version:1,path:[],nextDecisionInMs:0,task:{action:'work',elapsedMs:0,approach:{x:0,z:0,yaw:Infinity}}},
+    {version:1,path:Array(4097).fill({x:0,z:0}),nextDecisionInMs:0}];
+  try{
+    const snapshot=validSnapshot();saveCurrent(store,snapshot);const revision=store.revision();
+    for(const continuation of bad){
+      const candidate=structuredClone(snapshot);Object.assign(candidate.fineChunks[0].npcStates[0],{continuation});
+      assert.throws(()=>saveCurrent(store,candidate),WorldSnapshotValidationError);assert.equal(store.revision(),revision);
+    }
+    const candidate=structuredClone(snapshot);Object.assign(candidate.fineChunks[0].wildlifeStates![0],{continuation:{version:1,path:[],nextDecisionInMs:0,actionResolved:'false',controllerSpeed:0}});
+    assert.throws(()=>saveCurrent(store,candidate),WorldSnapshotValidationError);assert.equal(store.revision(),revision);
+  }finally{store.close();}
+});

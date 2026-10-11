@@ -93,6 +93,7 @@ export interface NpcMemory {
 }
 
 export interface NpcState {
+  continuation?: import('./world/actorContinuation.js').NpcContinuation;
   id: string;
   /** Accepted random events; absent legacy cursors start at zero. */
   randomEventCursor?: number;
@@ -1036,6 +1037,7 @@ export interface WildlifeDomesticationState {
 }
 
 export interface WildlifeState {
+  continuation?: import('./world/actorContinuation.js').WildlifeContinuation;
   id: string;
   /** Accepted random events; absent legacy cursors start at zero. */
   randomEventCursor?: number;
@@ -1308,3 +1310,4 @@ export interface WorldPersistenceSnapshot {
   wildlifeTransfers?: PersistedWildlifeTransfer[];
   savedAt?: number;
 }
+

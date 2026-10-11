@@ -1,3 +1,4 @@
+import {readNpcContinuation,readWildlifeContinuation} from '../src/world/actorContinuation.js';
 import type {
   ChunkBiome, ChunkEcologyPolicy, ChunkMigrationPolicy, ChunkStrategy, DecisionAction, InteractionCapability, ItemKind,
   Mood, NpcRole, ObjectKind, PersistedFineChunk, PersistedWildlifeTransfer, RigidBodyArchetypeId, WildlifeAction,
@@ -197,6 +198,7 @@ const validateNpc=(v:Validator,value:unknown,path:string,expectedChunk:string|un
   const obj=v.record(value,path);if(!obj)return;
   v.string(obj.id,`${path}.id`,{max:256});
   v.optionalNumber(obj,'randomEventCursor',path,{min:0,max:Number.MAX_SAFE_INTEGER,integer:true});
+  try{readNpcContinuation(obj.continuation);}catch{v.issue(`${path}.continuation`,'invalid NPC continuation');}
   if(obj.chunkId!==undefined){
     const chunk=v.string(obj.chunkId,`${path}.chunkId`,{max:256});
     if(expectedChunk!==undefined&&chunk!==expectedChunk)v.issue(`${path}.chunkId`,`must match parent chunk ${expectedChunk}`);
@@ -265,6 +267,7 @@ const validateWildlife=(v:Validator,value:unknown,path:string,expectedChunk?:str
   const obj=v.record(value,path);if(!obj)return undefined;
   v.string(obj.id,`${path}.id`,{max:256});
   v.optionalNumber(obj,'randomEventCursor',path,{min:0,max:Number.MAX_SAFE_INTEGER,integer:true});
+  try{readWildlifeContinuation(obj.continuation);}catch{v.issue(`${path}.continuation`,'invalid wildlife continuation');}
   const chunk=v.string(obj.chunkId,`${path}.chunkId`,{max:256});
   if(expectedChunk!==undefined&&chunk!==expectedChunk)v.issue(`${path}.chunkId`,`must match parent/destination chunk ${expectedChunk}`);
   v.enum(obj.species,`${path}.species`,SPECIES);
@@ -493,3 +496,4 @@ export function validateWorldPersistenceSnapshot(input:unknown):WorldPersistence
   if(v.issues.length)throw new WorldSnapshotValidationError(v.issues);
   return input as WorldPersistenceSnapshot;
 }
+
