@@ -1,4 +1,6 @@
-import {test,expect,type APIRequestContext,type Page,type Request} from '@playwright/test';
+import {type Request} from '@playwright/test';
+import {test,expect,type APIRequestContext,type Page} from './helpers/native-input-probe.js';
+import {driveNativeWaypoint} from './helpers/native-waypoint.js';
 import type {CoarseChunkState,NpcState,WildlifeDecisionBatchRequest,WildlifeState,WorldPersistenceSnapshot} from '../src/types.js';
 import {startFirstPerson} from './helpers/native-start.js';
 
@@ -26,21 +28,10 @@ async function autosave(page:Page,request:APIRequestContext){
   const stored=await readWorld(request);expect(stored.revision).toBe(revision);
   return{snapshot:submitted.snapshot,stored:stored.snapshot,revision};
 }
-async function nativeCrossing(page:Page,key:'KeyA'|'KeyD',crossed:(x:number)=>boolean){
-  const started=Date.now();
-  const read=()=>status(page).evaluate(el=>{
-    const data=(el as HTMLElement).dataset;
-    return {x:Number(data.playerX),z:Number(data.playerZ),yaw:Number(data.cameraYaw),inputSeconds:Number(data.playerInputSeconds),
-      materializedChunks:Number(data.materializedChunks),locked:document.pointerLockElement?.tagName==='CANVAS'};
-  });
-  const before=await read();let after=before;
-  try{
-    await page.keyboard.down(key);
-    await expect.poll(async()=>{after=await read();return crossed(after.x);},{timeout:8000,intervals:[50]}).toBe(true);
-  }finally{
-    await page.keyboard.up(key);
-    console.info('native-crossing',JSON.stringify({key,elapsedMs:Date.now()-started,before,after,crossed:crossed(after.x)}));
-  }
+async function nativeCrossing(page:Page,x:number,crossed:(x:number)=>boolean){
+  const result=await page.evaluate(driveNativeWaypoint,{target:{x,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
+  console.info('late-wildlife-crossing',JSON.stringify(result));
+  expect(result.reached).toBe(true);expect(crossed(result.x)).toBe(true);
 }
 
 test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.setItem('latticefolk.locale','en'));});
@@ -126,15 +117,19 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     captured=route.request();expect(body.requests.find(item=>item.wildlife.id===rabbit.id)!.wildlife.randomEventCursor).toBe(17);
     await gate;
     try{await route.fulfill({json:{source:'e2e-late',decisions:[{wildlifeId:rabbit.id,action:'wander',source:'e2e-late',confidence:1,reasonCode:'old-owner'}]}});}
+    catch(error){expect(route.request().failure()?.errorText).toMatch(/ERR_ABORTED|NS_BINDING_ABORTED/);}
     finally{handled();}
   });
+  const expired=page.waitForEvent('requestfailed',r=>r===captured);void expired.catch(()=>{});
   try{
     await page.goto('/',{waitUntil:'domcontentloaded'});await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
     await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);
-    await nativeCrossing(page,'KeyA',x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
-    await nativeCrossing(page,'KeyD',x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await nativeCrossing(page,35.2,x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
+    await nativeCrossing(page,37.2,x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await expect.poll(()=>status(page).evaluate(el=>(JSON.parse((el as HTMLElement).dataset.streamedLayouts||'[]') as {fineOwners:string[]}[]).flatMap(unit=>unit.fineOwners))).toEqual([chunk.id]);
     await expect.poll(()=>status(page).evaluate(el=>JSON.parse((el as HTMLElement).dataset.wildlifeVisuals||'[]').some((x:{id:string})=>x.id==='rabbit_rng'))).toBe(true);
-    release();await finished;const reply=await captured!.response();expect(reply?.status()).toBe(200);expect(await reply!.finished()).toBeNull();
+    expect((await expired).failure()?.errorText).toMatch(/ERR_ABORTED|NS_BINDING_ABORTED/);
+    release();await finished;expect(await captured!.response()).toBeNull();
     await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
     const saved=await autosave(page,request);const current=saved.stored.fineChunks.find(f=>f.chunkId===chunk.id)!.wildlifeStates!.find(w=>w.id===rabbit.id)!;
     expect(current).toMatchObject({id:rabbit.id,randomEventCursor:17,currentAction:'rest'});

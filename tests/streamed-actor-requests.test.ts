@@ -58,3 +58,4 @@ test('current player dialogue still applies its accepted result',async()=>{
  const f=fixture(),speaker=npc(),pending=f.r.playerTalk(speaker);f.dialogue();await pending;
  assert.deepEqual(f.spoken,['late']);assert.equal(f.remembered.length,1);assert.equal((speaker.state as any).lastDialogue,'late');
 });
+

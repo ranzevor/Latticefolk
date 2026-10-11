@@ -76,3 +76,4 @@ for(const method of ['requestDecision','requestWildlifeBatch'] as const){
     assert.equal(f.npc.pendingDecision,false);assert.equal(f.runtime.inFlight,0);assert.equal(f.runtime.wildlifeDecisionPending,false);
   });
 }
+

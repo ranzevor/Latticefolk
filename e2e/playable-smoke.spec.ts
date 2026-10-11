@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from './helpers/native-input-probe.js';
 import type { WorldPersistenceSnapshot } from '../src/types.js';
 import { startFirstPerson } from './helpers/native-start.js';
 import { driveNativeWaypoint } from './helpers/native-waypoint.js';
@@ -481,6 +481,10 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   };
   const heldGate=new Promise<void>(resolve=>{releaseHeld=resolve;});
   let heldCompleted=false;
+  let releaseFresh=()=>{};
+  const freshGate=new Promise<void>(resolve=>{releaseFresh=resolve;});
+  let freshResponses=0;
+  await page.exposeFunction('notifyCoarseStaleObserved',()=>{releaseFresh();});
   await page.exposeFunction('notifyCoarseTransitionExited',()=>{
     releaseOnce();
   });
@@ -489,7 +493,9 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   let capturedAt=0;
   await page.route('**/api/world/chunks/decide',async route=>{
     if(heldRequest){
-      await route.continue();
+      await freshGate;
+      await route.continue().catch(()=>{});
+      freshResponses++;
       return;
     }
     heldRequest=JSON.parse(route.request().postData()||'{}') as ChunkDecisionRequestForE2E;
@@ -556,21 +562,29 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
 
     releaseOnce();
     await expect.poll(()=>heldCompleted,{timeout:3_000}).toBe(true);
-    await page.waitForTimeout(250);
-    const afterStale=await runtime(page);
+    const afterStale=await page.evaluate(async()=>{
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+      const data=document.querySelector<HTMLElement>('#worldStatus')!.dataset;
+      const snapshot={coarseRequestTimeouts:Number(data.coarseRequestTimeouts),coarseDecidedChunks:Number(data.coarseDecidedChunks),
+        coarseLastBatchSize:Number(data.coarseLastBatchSize),coarseLastSource:data.coarseLastSource};
+      await (window as unknown as {notifyCoarseStaleObserved:()=>Promise<void>}).notifyCoarseStaleObserved();
+      return snapshot;
+    });
     expect(afterStale.coarseRequestTimeouts).toBe(before.coarseRequestTimeouts);
     expect(afterStale.coarseDecidedChunks).toBe(before.coarseDecidedChunks);
     expect(afterStale.coarseLastBatchSize).toBe(before.coarseLastBatchSize);
     expect(afterStale.coarseLastSource).not.toBe('e2e-stale-transition');
     await page.screenshot({path:testInfo.outputPath('coarse-request-transition-rejected.png'),fullPage:true});
 
-    await page.unroute('**/api/world/chunks/decide');
+    releaseFresh();
     await expect.poll(async()=>(await runtime(page)).coarseDecidedChunks,{timeout:40_000}).toBeGreaterThan(before.coarseDecidedChunks);
     const recovered=await runtime(page);
     expect(recovered.coarseLastBatchSize).toBeGreaterThan(0);
+    expect(freshResponses).toBeGreaterThan(0);
     expect(recovered.coarseLastSource).not.toBe('e2e-stale-transition');
   }finally{
-    releaseOnce();
+    releaseOnce();releaseFresh();
     await page.unroute('**/api/world/chunks/decide').catch(()=>{});
   }
 });
+

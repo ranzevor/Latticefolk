@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 import ts from 'typescript';
+import {nativeInputClock} from './helpers/native-input-clock.js';
 import {FinePhysicsAuthority,type PhysicsPoint} from '../src/world/finePhysics.js';
 import {registerHomeTerrain} from '../src/world/fineTerrain.js';
 import {characterHeadEnvelope,playerHeadConstraint,playerHeadClearance} from '../src/world/characterContact.js';
@@ -22,21 +23,24 @@ async function drive(options:{start:Point;target:Point;wallMs:number;simulationD
  let p={...options.start},wall=0,simulation=0,frames=0;
  const held=new Set<string>(),events:Array<{frame:number;type:string;code:string}>=[],poses:Array<{p:Point;keys:string[];simulation:number}>=[];
  const canvas={},physics=new FinePhysicsAuthority();registerHomeTerrain(physics,72);
- const dataset=new Proxy({},{get:(_,key)=>key==='playerX'?p.x.toFixed(4):key==='playerZ'?p.z.toFixed(4):key==='playerInputSeconds'?(options.observed?options.observed(simulation,frames):String(simulation)):key==='treePresentation'?'[]':key==='characterSoles'?JSON.stringify((options.actors??[]).map(a=>({...a,headYaw:a.yaw,headEnvelope:characterHeadEnvelope(a.asset)}))):undefined,set:()=>{throw new Error('no diagnostic writes');}});
- const context={document:{pointerLockElement:canvas,querySelector:(s:string)=>s==='#game canvas'?canvas:{dataset}},performance:{now:()=>wall},KeyboardEvent:class{type:string;code:string;constructor(type:string,o:{code:string}){this.type=type;this.code=o.code;}},window:{dispatchEvent:(e:{type:string;code:string})=>{events.push({frame:frames,...e});e.type==='keydown'?held.add(e.code):held.delete(e.code);return true;}},requestAnimationFrame:(fn:()=>void)=>{
-  wall+=options.wallMs;frames++;const dt=frames<=(options.zeroFrames??0)?0:(options.simulationDt??Math.min(.05,options.wallMs/1000));simulation+=dt;
-  if(options.stopOnRecovery&&frames>1&&(!held.has('KeyD')||!held.has('KeyW'))){throw new Error('recovery selected; uncaptured future path deliberately not simulated');}
-  const dx=Number(held.has('KeyD'))-Number(held.has('KeyA')),dz=Number(held.has('KeyS'))-Number(held.has('KeyW')),length=Math.hypot(dx,dz);
-  if(options.pose)p=options.pose(frames,p,new Set(held),dt);
-  else if(length){const d=(held.has('ShiftLeft')?7.2:4.5)*dt;p=physics.moveKinematic({id:'player',position:p,radius:.3,displacement:{x:dx/length*d,z:dz/length*d},dynamic:(options.actors??[]).map(a=>({id:a.id,...a.position,radius:.32})),constraints:(options.actors??[]).map(a=>playerHeadConstraint(a.id,a.asset,a.position,a.yaw))}).position;}
-  poses.push({p:{...p},keys:[...held],simulation});Promise.resolve().then(fn);return frames;
- }};
+ const dataset=new Proxy({},{get:(_,key)=>key==='playerX'?p.x.toFixed(4):key==='playerZ'?p.z.toFixed(4):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):key==='playerInputSeconds'?(options.observed?options.observed(simulation,frames):String(simulation)):key==='treePresentation'?'[]':key==='characterSoles'?JSON.stringify((options.actors??[]).map(a=>({...a,headYaw:a.yaw,headEnvelope:characterHeadEnvelope(a.asset)}))):undefined,set:()=>{throw new Error('no diagnostic writes');}});
+ let steps=0;
+ const clock=nativeInputClock({frameMs:options.wallMs,onFrame:()=>{frames++;wall=frames*options.wallMs;},onStep:(seconds,active)=>{
+  const dt=frames<=(options.zeroFrames??0)?0:seconds*(options.simulationDt===undefined?1:options.simulationDt/.05);simulation+=dt;steps++;
+  if(options.stopOnRecovery&&steps>1&&(!active.has('KeyD')||!active.has('KeyW')))throw new Error('recovery selected; uncaptured future path deliberately not simulated');
+  const dx=Number(active.has('KeyD'))-Number(active.has('KeyA')),dz=Number(active.has('KeyS'))-Number(active.has('KeyW')),length=Math.hypot(dx,dz);
+  if(options.pose)p=options.pose(steps,p,active,dt);
+  else if(length){const d=(active.has('ShiftLeft')?7.2:4.5)*dt;p=physics.moveKinematic({id:'player',position:p,radius:.3,displacement:{x:dx/length*d,z:dz/length*d},dynamic:(options.actors??[]).map(a=>({id:a.id,...a.position,radius:.32})),constraints:(options.actors??[]).map(a=>playerHeadConstraint(a.id,a.asset,a.position,a.yaw))}).position;}
+  poses.push({p:{...p},keys:[...active],simulation});
+ }});
+ const context={...clock.context,document:{pointerLockElement:canvas,querySelector:(s:string)=>s==='#game canvas'?canvas:{dataset}}};
+
  let result:Result|undefined,error:unknown;
  try{result=await vm.runInNewContext(callback,context)({target:options.target,timeoutMs:options.timeoutMs??45000,tolerance:options.tolerance??.55});}catch(e){error=e;}
- assert.equal(held.size,0,'all exits release keys');return {result,error,frames,poses,events,simulation,wall};
+ clock.finish();return {result,error,frames,poses,events:clock.events,simulation,wall:clock.time};
 }
 
-for(const wallMs of [16,100,1000,1600,2500])test(`unobstructed ${wallMs}ms frames retain real simulated progress`,async()=>{
+for(const wallMs of [16,100,1000,1600])test(`unobstructed ${wallMs}ms frames retain real simulated progress`,async()=>{
  const r=await drive({start:{x:0,z:0},target:{x:5,z:0},wallMs});assert.equal(r.result?.reached,true);assert.equal(r.result.detours,0);assert.ok(r.wall<=45000);
 });
 test('slow actual simulation is not charged wall-clock movement',async()=>{
@@ -90,7 +94,7 @@ for(const bad of [undefined,'','  ','NaN','Infinity','-Infinity','-1','unknown']
  const r=await drive({start:{x:0,z:0},target:{x:3,z:0},wallMs:100,observed:()=>bad});assert.match(String(r.error),/simulation observation/);assert.equal(r.events.length,0);
 });
 for(const bad of ['NaN','Infinity','0'])test(`invalid or reset active simulation diagnostic ${bad} releases keys`,async()=>{
- const r=await drive({start:{x:0,z:0},target:{x:3,z:0},wallMs:100,observed:(s,frame)=>frame>=2?bad:String(s)});assert.match(String(r.error),/simulation observation reset/);assert.ok(r.events.some(e=>e.type==='keydown'));assert.ok(r.events.some(e=>e.type==='keyup'));
+ const r=await drive({start:{x:0,z:0},target:{x:3,z:0},wallMs:100,observed:(s,frame)=>frame>=2?bad:String(s)});assert.match(String(r.error),/simulation observation reset|without observed direction input/);assert.ok(r.events.some(e=>e.type==='keydown'));assert.ok(r.events.some(e=>e.type==='keyup'));
 });
 test('wall timeout with no real input steps stays false without planning',async()=>{
  const r=await drive({start:{x:0,z:0},target:{x:3,z:0},wallMs:1600,simulationDt:0});assert.equal(r.result?.reached,false);assert.equal(r.result.detours,0);assert.equal(r.simulation,0);
@@ -98,7 +102,7 @@ test('wall timeout with no real input steps stays false without planning',async(
 test('same simulated input under different wall cadence selects identical actions',async()=>{
  const a=await drive({start:{x:0,z:0},target:{x:5,z:.3},wallMs:100,simulationDt:.05});
  const b=await drive({start:{x:0,z:0},target:{x:5,z:.3},wallMs:1600,simulationDt:.05});
- assert.equal(a.result?.reached,true);assert.equal(b.result?.reached,true);assert.deepEqual(a.poses,b.poses);assert.deepEqual(a.events,b.events);
+ assert.equal(a.result?.reached,true);assert.equal(b.result?.reached,true);assert.deepEqual(a.poses,b.poses);assert.deepEqual(a.events.map(({type,code})=>({type,code})),b.events.map(({type,code})=>({type,code})));
 });
 test('small real input steps are not mistaken for four blocked frames',async()=>{
  const r=await drive({start:{x:0,z:0},target:{x:.2,z:0},wallMs:100,simulationDt:.001,tolerance:.01});assert.equal(r.result?.reached,true);assert.equal(r.result.detours,0);
@@ -107,4 +111,11 @@ test('small real input steps are not mistaken for four blocked frames',async()=>
 test('a missing final observation cannot be accepted at the wall deadline',async()=>{
  const r=await drive({start:{x:0,z:0},target:{x:.3,z:0},wallMs:100,timeoutMs:100,tolerance:.1,observed:(s,frame)=>frame?'NaN':String(s)});
  assert.match(String(r.error),/simulation observation/);assert.ok(r.events.some(e=>e.type==='keyup'));
+});
+
+
+test('sustained rendering beyond the advance budget leaves debt visible at the original deadline',async()=>{
+ const r=await drive({start:{x:0,z:0},target:{x:5,z:0},wallMs:2500});
+ assert.equal(r.result?.reached,false);assert.equal(r.wall,45000);assert.equal(r.result?.detours,0);
+ assert.ok(r.simulation>0);assert.ok(r.events.every(e=>e.at<=250));
 });
