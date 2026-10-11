@@ -29,6 +29,12 @@ export class SimulationClock {
 
   clearInput(){this.input=undefined;this.changes=[];}
 
+  recordEvent(eventAt:number|undefined,handledAt:number,input:PlayerMovementInput|undefined):boolean {
+    if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
+    const at=this.sampledAt!==undefined&&typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt?eventAt:handledAt;
+    return this.record(Math.max(at,this.sampledAt??0,this.lastFrameAt??0,this.changes.at(-1)?.at??0),input);
+  }
+
   record(at:number,input:PlayerMovementInput|undefined):boolean {
     const latest=this.changes.at(-1);
     if(!Number.isFinite(at)||at<0||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(latest&&at<latest.at)){

@@ -910,9 +910,9 @@ class TownGame {
       if (e.code==='Space' && this.cameraMode==='god') { e.preventDefault(); this.focusTown(); return; }
       if (e.code==='KeyE' && this.cameraMode==='firstPerson') { this.interact(); return; }
       if(this.cameraMode==='god'&&isGodCameraInputKey(e.code)){this.godCameraKey(e.code,true,e.repeat);return;}
-      if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,true,e.repeat);
+      if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,true,e.repeat,e.isTrusted?e.timeStamp:undefined);
     });
-    addEventListener('keyup',(e)=>{if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,false);if(this.cameraMode==='god'&&isGodCameraInputKey(e.code))this.godCameraKey(e.code,false);});
+    addEventListener('keyup',(e)=>{if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,false,false,e.isTrusted?e.timeStamp:undefined);if(this.cameraMode==='god'&&isGodCameraInputKey(e.code))this.godCameraKey(e.code,false);});
     addEventListener('blur',()=>this.resetSimulationClock());
     addEventListener('focus',()=>this.resetSimulationClock());
     document.addEventListener('visibilitychange',()=>this.resetSimulationClock());
@@ -1093,18 +1093,18 @@ class TownGame {
       !active?.matches('input,textarea,select')&&!active?.isContentEditable;
   }
 
-  playerMovementKey(code:string,down:boolean,repeat=false) {
+  playerMovementKey(code:string,down:boolean,repeat=false,eventAt?:number) {
     if(!this.playerInputAllowed(false)){this.resetPlayerInput();return;}
     if(repeat||this.keys.has(code)===down)return;
     if(down)this.keys.add(code);else this.keys.delete(code);
-    if(this.persistenceReady)this.recordPlayerInput();
+    if(this.persistenceReady)this.recordPlayerInput(eventAt);
   }
 
-  recordPlayerInput() {
+  recordPlayerInput(eventAt?:number) {
     const forward=Number(this.keys.has('KeyW'))-Number(this.keys.has('KeyS'));
     const right=Number(this.keys.has('KeyD'))-Number(this.keys.has('KeyA'));
     const direction=new THREE.Vector3();this.camera.getWorldDirection(direction);direction.y=0;direction.normalize();
-    if(!this.simulationClock.record(now(),forward||right?{forward,right,sprint:this.keys.has('ShiftLeft'),directionX:direction.x,directionZ:direction.z}:undefined))this.keys.clear();
+    if(!this.simulationClock.recordEvent(eventAt,now(),forward||right?{forward,right,sprint:this.keys.has('ShiftLeft'),directionX:direction.x,directionZ:direction.z}:undefined))this.keys.clear();
   }
 
   simulateStep(dt:number,input:PlayerMovementInput|undefined) {
