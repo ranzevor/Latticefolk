@@ -1,14 +1,16 @@
 import {test as base,expect,type Page,type TestInfo,type APIRequestContext} from '@playwright/test';
 import {scheduleNativePulse,type NativePulseRequest} from './native-pulse-scheduler.js';
 
+const lateWildlife='late wildlife intent cannot mutate a rematerialized entity or consume its saved cursor';
 const selected=new Set([
+  lateWildlife,
   'real playable scene keeps God View observer-only and uses authoritative ground',
   'ordinary walking crosses the home edge into the visible layout and preserves it through return and reload',
   'saved actors stay visible across an internal owner boundary and reload without expanding fine simulation'
 ]);
 
 export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async({page},use,info)=>{
-  if(process.env.LATTICEFOLK_NATIVE_INPUT_PROBE!=='1'||!selected.has(info.title)){await use();return;}
+  if(!selected.has(info.title)||(process.env.LATTICEFOLK_NATIVE_INPUT_PROBE!=='1'&&info.title!==lateWildlife)){await use();return;}
   const session=await page.context().newCDPSession(page);
   const report={test:info.title,hostTimeOrigin:performance.timeOrigin,pulses:[] as unknown[],routes:[] as unknown[],errors:[] as string[]};
   await page.exposeBinding('__latticeNativePulse',async(_source,request:NativePulseRequest&{routeId:string;browserIssuedAt:number})=>{

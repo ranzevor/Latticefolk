@@ -3,7 +3,7 @@ import {startFirstPerson} from './helpers/native-start.js';
 
 test.afterEach(async({page,request})=>{await page.close();const cleanup=await request.delete('/api/world/state');expect(cleanup.ok()).toBe(true);});
 
-test('native short input retains handled time with real WebGL and reports frame response',async({page,request},info)=>{
+test('native short input retains event time with real WebGL and reports frame response',async({page,request},info)=>{
   test.setTimeout(120_000);
   const reset=await request.delete('/api/world/state');expect(reset.ok()).toBe(true);
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
@@ -17,8 +17,8 @@ test('native short input retains handled time with real WebGL and reports frame 
       return {x:Number(data.playerX),z:Number(data.playerZ),inputSeconds:Number(data.playerInputSeconds),
         clock:JSON.parse(data.simulationClock??'null') as {elapsedSeconds:number;simulatedSeconds:number;pendingSeconds:number;steps:number;inputOverflowCount:number;resetReason:string}|null};
     };
-    const evidence={before:read(),keys:[] as {type:string;at:number;trusted:boolean}[],frames:[] as {at:number;state:ReturnType<typeof read>}[],done:false};
-    const key=(event:KeyboardEvent)=>{if(event.code==='KeyD'&&!event.repeat)evidence.keys.push({type:event.type,at:performance.now(),trusted:event.isTrusted});};
+    const evidence={before:read(),keys:[] as {type:string;at:number;eventAt:number;trusted:boolean}[],frames:[] as {at:number;state:ReturnType<typeof read>}[],done:false};
+    const key=(event:KeyboardEvent)=>{if(event.code==='KeyD'&&!event.repeat)evidence.keys.push({type:event.type,at:performance.now(),eventAt:event.timeStamp,trusted:event.isTrusted});};
     addEventListener('keydown',key);addEventListener('keyup',key);
     let afterRelease=0;
     const sample=()=>{
@@ -37,7 +37,7 @@ test('native short input retains handled time with real WebGL and reports frame 
   }finally{await page.keyboard.up('KeyD');}
   await page.waitForFunction(()=>Boolean((window as unknown as {inputClockEvidence?:{done:boolean}}).inputClockEvidence?.done),undefined,{timeout:15_000});
   const evidence=await page.evaluate(()=>(window as unknown as {inputClockEvidence:{
-    before:{x:number;z:number;inputSeconds:number};keys:{type:string;at:number;trusted:boolean}[];
+    before:{x:number;z:number;inputSeconds:number};keys:{type:string;at:number;eventAt:number;trusted:boolean}[];
     frames:{at:number;state:{x:number;z:number;inputSeconds:number;clock:{elapsedSeconds:number;simulatedSeconds:number;pendingSeconds:number;steps:number;inputOverflowCount:number;resetReason:string}|null}}[]
   }}).inputClockEvidence);
   const intervals=evidence.frames.slice(1).map((frame,index)=>frame.at-evidence.frames[index].at).sort((a,b)=>a-b);
@@ -46,7 +46,7 @@ test('native short input retains handled time with real WebGL and reports frame 
   await info.attach('native-input-clock-and-natural-frame-timing',{body:Buffer.from(JSON.stringify({evidence,timing,errors},null,2)),contentType:'application/json'});
   await info.attach('native-input-clock-scene',{body:await page.screenshot(),contentType:'image/png'});
   expect(errors).toEqual([]);expect(evidence.keys.map(k=>k.type)).toEqual(['keydown','keyup']);expect(evidence.keys.every(k=>k.trusted)).toBe(true);
-  const held=(evidence.keys[1].at-evidence.keys[0].at)/1000;
+  const held=(evidence.keys[1].eventAt-evidence.keys[0].eventAt)/1000;
   expect(Number.isFinite(held)).toBe(true);expect(held).toBeGreaterThan(0);
   const final=evidence.frames.at(-1)!.state,inputSeconds=final.inputSeconds-evidence.before.inputSeconds;
   expect(Math.abs(inputSeconds-held)).toBeLessThan(.02);
