@@ -207,6 +207,15 @@ async function observeNativeFrames<T>(page:Page,info:TestInfo,action:()=>Promise
 
 test('72m streamed layouts use sourced assets and God camera does not discover or materialize chunks',async({page},info)=>{
   test.setTimeout(180_000);
+  const started=performance.now();
+  const phases:{name:string;durationMs:number;elapsedMs:number;completed:boolean}[]=[];
+  let phaseStarted=started,phase='startup',completed=false;
+  const finishPhase=(next:string,done=true)=>{
+    const now=performance.now();
+    phases.push({name:phase,durationMs:Math.round(now-phaseStarted),elapsedMs:Math.round(now-started),completed:done});
+    phaseStarted=now;phase=next;
+  };
+  try{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>localStorage.setItem('latticefolk.locale','en'));
   await page.goto('/',{waitUntil:'domcontentloaded'});
@@ -217,6 +226,7 @@ test('72m streamed layouts use sourced assets and God camera does not discover o
     ready=await readView(page);
     return ready.layouts.length>0&&ready.layouts.every(layout=>layout.entities.every(entity=>entity.meshes>0));
   },{timeout:45_000}).toBe(true);
+  finishPhase('layout-invariants');
   const before=ready!.layouts;
   expect(before.length).toBe(8);
   expect(before.every(layout=>layout.bounds.maxX-layout.bounds.minX===72&&layout.bounds.maxZ-layout.bounds.minZ===72)).toBe(true);
@@ -225,9 +235,11 @@ test('72m streamed layouts use sourced assets and God camera does not discover o
   expect(entities.filter(entity=>entity.kind!=='road').every(entity=>entity.primitiveMeshes===0)).toBe(true);
   expect(entities.some(entity=>entity.kind==='building')).toBe(true);
   expect(entities.some(entity=>['tree','bush','rock','flower'].includes(entity.kind))).toBe(true);
+  finishPhase('first-person');
   await startFirstPerson(page);
   await expect.poll(()=>hudView(page)).toEqual({diagnostics:[false,false],player:[true,true,true],console:false,playerLogOnly:true,mode:'firstPerson'});
   await info.attach('first-person-clean-hud',{body:await page.screenshot(),contentType:'image/png'});
+  finishPhase('diagnostics-toggle');
   // Tab reveals the same live diagnostics without changing camera or world state.
   await page.keyboard.press('Tab');
   await expect.poll(()=>hudView(page)).toMatchObject({diagnostics:[true,true],player:[true,true,true],console:true,mode:'firstPerson'});
@@ -236,10 +248,12 @@ test('72m streamed layouts use sourced assets and God camera does not discover o
   await expect.poll(async()=>{settled=await readView(page);return settled.hud;}).toEqual({diagnostics:[false,false],player:[true,true,true],console:false,playerLogOnly:true,mode:'firstPerson'});
   const {discovered,materialized}=settled!;
 
+  finishPhase('observer-entry');
   await page.keyboard.press('KeyG');
   await expect(page.locator('#worldStatus')).toHaveAttribute('data-camera-mode','god');
   await expect.poll(()=>hudView(page)).toMatchObject({diagnostics:[true,true],player:[true,true,true],console:false,mode:'god'});
   // Refresh observer labels in place without returning the player to the world.
+  finishPhase('observer-locales');
   const observerReference=await page.evaluateHandle(captureLocaleDom,-1);
   await page.locator('#localeSelect').selectOption('ja');
   await expect.poll(()=>page.evaluate(readLocaleDom,observerReference)).toMatchObject({
@@ -252,6 +266,7 @@ test('72m streamed layouts use sourced assets and God camera does not discover o
     lang:'en',modeHint:'Observer',mode:'god',playerBody:'false',sameCanvas:true,discovered,materialized
   });
   await observerReference.dispose();
+  finishPhase('observer-camera');
   const canvas=page.locator('#game canvas');
   const box=await canvas.boundingBox();expect(box).not.toBeNull();
   await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);
@@ -259,14 +274,23 @@ test('72m streamed layouts use sourced assets and God camera does not discover o
   await wait(700);
   await info.attach('streamed-sourced-layouts-god',{body:await page.screenshot(),contentType:'image/png'});
 
+  finishPhase('observer-world-invariants');
   const afterView=await readView(page);
   expect(afterView.discovered).toBe(discovered);
   expect(afterView.materialized).toBe(materialized);
   const after=afterView.layouts;
   expect(after).toEqual(before);
+  finishPhase('first-person-return');
   await page.keyboard.press('KeyG');
   await expect.poll(()=>hudView(page)).toEqual({diagnostics:[false,false],player:[true,true,true],console:false,playerLogOnly:true,mode:'firstPerson'});
   expect(errors).toEqual([]);
+  completed=true;
+  }finally{
+    finishPhase('finished',completed);
+    const bodyElapsedMs=Math.round(performance.now()-started);
+    console.log('coarse-presentation-phases',JSON.stringify({completed,timeoutMs:info.timeout,bodyElapsedMs,
+      timingScope:'test-body',bodyBudgetRemainingMs:info.timeout-bodyElapsedMs,phases}));
+  }
 });
 
 
@@ -311,3 +335,4 @@ test('ordinary walking crosses the home edge into the visible layout and preserv
     expect(errors).toEqual([]);
   }finally{await page.close();const clear=await request.delete('/api/world/state');expect(clear.ok()).toBe(true);}
 });
+
