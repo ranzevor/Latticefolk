@@ -119,3 +119,9 @@ test('sustained rendering beyond the advance budget leaves debt visible at the o
  assert.equal(r.result?.reached,false);assert.equal(r.wall,45000);assert.equal(r.result?.detours,0);
  assert.ok(r.simulation>0);assert.ok(r.events.every(e=>e.at<=250));
 });
+
+test('unobstructed overshoot corrections do not become collision detours',async()=>{
+ const r=await drive({start:{x:35.1784,z:1.2},target:{x:37.2,z:1.2},wallMs:100,tolerance:.2,timeoutMs:2000,
+  pose:(_frame,p,keys,dt)=>({x:p.x+(Number(keys.has('KeyD'))-Number(keys.has('KeyA')))*(keys.has('ShiftLeft')?7.2:4.5)*dt*4,z:p.z})});
+ assert.equal(r.error,undefined);assert.equal(r.result?.detours,0);assert.equal(r.result?.history.some(h=>h.phase==='slow-progress'),false);
+});

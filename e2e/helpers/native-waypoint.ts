@@ -173,6 +173,7 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
         throw new Error('Waypoint position changed without observed direction input');
       if(performance.now()>deadline)break;
       if(maxInputSeconds!==undefined&&inputSeconds>maxInputSeconds+1e-9){stopReason='input-budget';break;}
+      if(progress&&(progress.goal.x-observedPosition.x)*(progress.goal.x-p.x)+(progress.goal.z-observedPosition.z)*(progress.goal.z-p.z)<0)progress=undefined;
       observedPosition=p;
       const pending=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
       if(!pending||!Number.isFinite(pending.pendingSeconds)||pending.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');

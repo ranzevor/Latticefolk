@@ -10,7 +10,7 @@ const source=fs.readFileSync(new URL('../e2e/helpers/parcel-route.ts',import.met
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function traverseNativeParcelRoute','async function traverseNativeParcelRoute')+'\ntraverseNativeParcelRoute;';
 
-async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'starved'|'at-goal'='none'){
+async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'starved'|'at-goal'|'overshot'='none'){
   const start={x:44.60367976,z:4.26291002};let p={...start},yaw=0;
   const physics=new FinePhysicsAuthority();
   if(obstacle)physics.registerStatic({id:'prop',minX:40,maxX:40.3,minZ:4.1,maxZ:4.5});
@@ -27,9 +27,14 @@ async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'sta
   const context={...clock.context,document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}},MouseEvent:class{}};
   const fn=vm.runInNewContext(callback,context) as (args:object)=>Promise<{position:{x:number;z:number};detours:number}>;
   try{
-    if(prime!=='none')await new Promise<void>(resolve=>clock.context.requestAnimationFrame(resolve));
+    if(prime!=='none'&&prime!=='overshot')await new Promise<void>(resolve=>clock.context.requestAnimationFrame(resolve));
     const began=clock.time,initialDebt=clock.clock.diagnostics.pendingSeconds;
-    if(prime!=='none'){assert.ok(initialDebt>0);assert.equal(clock.events.length,0);}
+    if(prime!=='none'&&prime!=='overshot'){assert.ok(initialDebt>0);assert.equal(clock.events.length,0);}
+    if(prime==='overshot'){
+      const result=await fn({key:'KeyD',targetX:start.x-1,laneZ:start.z});
+      assert.ok(Math.abs(result.position.x-(start.x-1))<.005,'overshoot must return to the pickup approach');
+      assert.ok(clock.events.some(e=>e.type==='keydown'));return;
+    }
     if(prime==='starved'){
       await assert.rejects(fn({key:'KeyA',targetX:35.6,laneZ:start.z}),/bounded input budget/);
       assert.equal(clock.time-began,90000);assert.equal(clock.events.length,0);assert.equal(clock.inputSeconds,0);
@@ -57,3 +62,5 @@ for(const frameMs of [100,1000])test(`parcel detour restores its original lane a
 test('parcel route drains existing foreground debt before its first key press',()=>replay(1000,false,'catch-up'));
 test('parcel route cannot accept its initial goal while debt remains',()=>replay(1000,false,'at-goal'));
 test('parcel route keeps initial debt and issues no input when the original deadline expires',()=>replay(2500,false,'starved'));
+
+test('parcel route corrects an overshot inbound goal before reporting arrival',()=>replay(1000,false,'overshot'));
