@@ -263,11 +263,12 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
         setHeld(next);
         await new Promise<void>(resolve=>setTimeout(()=>{setHeld(new Set());resolve();},pulseMs));
       }
+      let observedPulse=Boolean(probe)&&simulation()>simulatedAt;
       do {
-        await nextFrame();
         const clock=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
         if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-        if(clock.pendingSeconds===0)break;
+        if(observedPulse&&clock.pendingSeconds===0)break;
+        await nextFrame();observedPulse=true;
       } while(performance.now()<deadline);
     }
     const finalSimulation=simulation();
