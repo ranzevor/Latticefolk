@@ -1,10 +1,15 @@
 import type { Express } from 'express';
-import { WorldPersistence, WorldPersistenceConflictError } from './worldPersistence.js';
+import { WorldPersistence, WorldPersistenceConflictError, WorldPersistenceIntegrityError } from './worldPersistence.js';
 import { validateWorldPersistenceSnapshot, WorldSnapshotValidationError } from './worldSnapshotValidation.js';
 
 export function registerWorldStateRoutes(app:Express,worldStore:WorldPersistence) {
   app.get('/api/world/state', (_req, res) => {
-    res.json({ snapshot:worldStore.load(), revision:worldStore.revision(), stats:worldStore.stats() });
+    try{
+      res.json({ snapshot:worldStore.load(), revision:worldStore.revision(), stats:worldStore.stats() });
+    }catch(error){
+      if(!(error instanceof WorldPersistenceIntegrityError))throw error;
+      res.status(500).json({error:error.message});
+    }
   });
 
   app.post('/api/world/state', (req, res) => {
@@ -17,6 +22,10 @@ export function registerWorldStateRoutes(app:Express,worldStore:WorldPersistence
       const snapshot=validateWorldPersistenceSnapshot(body.snapshot);
       res.json(worldStore.save(snapshot,Number(body.expectedRevision)));
     } catch(error) {
+      if(error instanceof WorldPersistenceIntegrityError){
+        res.status(500).json({error:error.message});
+        return;
+      }
       if(error instanceof WorldPersistenceConflictError){
         res.status(409).json({
           error:'World persistence revision conflict',
