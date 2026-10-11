@@ -525,8 +525,19 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
     try {
       await Promise.race([captured,new Promise<never>((_,reject)=>{captureTimer=setTimeout(()=>reject(new Error('No coarse request within 45000 ms')),45_000);})]);
     } finally {clearTimeout(captureTimer);}
-    const transition=await page.evaluate(crossCoarseBoundary);
-    releaseOnce(); // Browser transition completion releases the held response immediately; finally remains the safety net.
+    const profiler=await page.context().newCDPSession(page);
+    let transition:Awaited<ReturnType<typeof crossCoarseBoundary>>;
+    await profiler.send('Profiler.enable');
+    await profiler.send('Profiler.start');
+    try{
+      transition=await page.evaluate(crossCoarseBoundary);
+      releaseOnce();
+    }finally{
+      try{
+        const {profile}=await profiler.send('Profiler.stop');
+        await testInfo.attach('coarse-transition-cpu-profile',{body:Buffer.from(JSON.stringify(profile)),contentType:'application/json'});
+      }finally{await profiler.detach();}
+    }
     const before=transition.before;
     await testInfo.attach('coarse-native-transition-timing',{body:Buffer.from(JSON.stringify({capturedAt,releasedAt,transition},null,2)),contentType:'application/json'});
     expect(transition.entered).toBe(true);
