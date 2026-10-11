@@ -54,7 +54,8 @@ export function restoreNpcContinuation(runtime:Runtime,clock:number):void {
   number(clock,0);
   const value=readNpcContinuation(runtime.state.continuation);
   if(!value)return;
-  runtime.path=value.path;runtime.pathIndex=0;runtime.nextDecisionAt=number(clock+value.nextDecisionInMs,0);
+  const nextDecisionAt=number(clock+value.nextDecisionInMs,0);
+  runtime.path=value.path;runtime.pathIndex=0;runtime.nextDecisionAt=nextDecisionAt;
   runtime.task=undefined;
   if(value.task){const {elapsedMs,...task}=value.task;runtime.task={...task,startedAt:clock-elapsedMs};}
   delete runtime.state.continuation;
@@ -82,7 +83,8 @@ export function restoreWildlifeContinuation(runtime:WildlifeRuntime,clock:number
   number(clock,0);
   const value=readWildlifeContinuation(runtime.state.continuation);
   if(!value)return;
-  runtime.path=value.path;runtime.pathIndex=0;runtime.nextDecisionAt=number(clock+value.nextDecisionInMs,0);
+  const nextDecisionAt=number(clock+value.nextDecisionInMs,0);
+  runtime.path=value.path;runtime.pathIndex=0;runtime.nextDecisionAt=nextDecisionAt;
   runtime.actionResolved=value.actionResolved;runtime.controllerSpeed=value.controllerSpeed;
   delete runtime.state.continuation;
 }
