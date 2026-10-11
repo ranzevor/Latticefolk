@@ -61,7 +61,7 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
       if(phase==='offset'&&Math.abs(p.z-(laneZ-.9))<.005){phase='bypass';unchanged=0;record(p);}
       if(phase==='bypass'&&direction*(p.x-bypassX)>=-.0001){phase='restore';unchanged=0;record(p);}
       if(phase==='restore'&&Math.abs(p.z-laneZ)<.005){phase='cross';unchanged=0;record(p);}
-      if(phase==='cross'&&direction*(p.x-targetX)>=-.0001&&Math.abs(p.z-laneZ)<.005){
+      if(phase==='cross'&&direction*(p.x-targetX)>=-.0001&&Math.abs(p.x-targetX)<.005&&Math.abs(p.z-laneZ)<.005){
         record(p);return {position:p,detours,history};
       }
       if(unchanged>=4){
