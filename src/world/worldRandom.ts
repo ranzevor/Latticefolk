@@ -1,3 +1,4 @@
+import {readNpcContinuation,readWildlifeContinuation} from './actorContinuation.js';
 import type {WorldPersistenceSnapshot, WorldRandomness} from '../types.js';
 
 export const DEFAULT_WORLD_SEED='latticefolk-default';
@@ -25,12 +26,12 @@ export function randomEventCursor(value:unknown):number {
 /** Check all stored random authority before creating or mutating the world. */
 export function snapshotRandomness(snapshot:WorldPersistenceSnapshot):WorldRandomness {
   const randomness=readWorldRandomness(snapshot.meta.randomness);
-  for(const state of snapshot.homeNpcs||[])randomEventCursor(state.randomEventCursor);
+  for(const state of snapshot.homeNpcs||[]){randomEventCursor(state.randomEventCursor);readNpcContinuation(state.continuation);}
   for(const chunk of snapshot.fineChunks||[]){
-    for(const state of chunk.npcStates||[])randomEventCursor(state.randomEventCursor);
-    for(const state of chunk.wildlifeStates||[])randomEventCursor(state.randomEventCursor);
+    for(const state of chunk.npcStates||[]){randomEventCursor(state.randomEventCursor);readNpcContinuation(state.continuation);}
+    for(const state of chunk.wildlifeStates||[]){randomEventCursor(state.randomEventCursor);readWildlifeContinuation(state.continuation);}
   }
-  for(const transfer of snapshot.wildlifeTransfers||[])randomEventCursor(transfer.state.randomEventCursor);
+  for(const transfer of snapshot.wildlifeTransfers||[]){randomEventCursor(transfer.state.randomEventCursor);readWildlifeContinuation(transfer.state.continuation);}
   return randomness;
 }
 
@@ -70,3 +71,4 @@ export function beginRandomEvent(randomness:WorldRandomness,state:{id:string;ran
 export function fineLayoutKey(seed:string,key:string):string {
   return seed===DEFAULT_WORLD_SEED?key:JSON.stringify([WORLD_RANDOM_VERSION,seed,'fine-layout',key]);
 }
+

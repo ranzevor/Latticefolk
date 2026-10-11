@@ -1,3 +1,4 @@
+import * as npcContinuation from '../src/world/actorContinuation.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ function fixture(roll=.95){
   let draws=0;
   const io={snapshot:null as WorldPersistenceSnapshot|null,beacons:[] as {url:string;body:Blob}[]};
   const math=Object.create(Math) as Math;math.random=()=>{throw new Error('ambient randomness');};
-  const randomDependencies={...worldRandom,keyedRandom:()=>()=>{draws++;return roll;}};
+  const randomDependencies={...npcContinuation,...worldRandom,keyedRandom:()=>()=>{draws++;return roll;}};
   const navigator={sendBeacon:(url:string,body:Blob)=>{io.beacons.push({url,body});return true;}};
   const fetch=async(url:string)=>{assert.equal(url,'/api/world/state');return{ok:true,json:async()=>({snapshot:io.snapshot,revision:6})};};
   const RuntimeClass=new Function(...Object.keys(randomDependencies),'Math','THREE','clamp','restoredPlayerPosition','navigator','fetch','i18n','now','StreamedLayoutValidationError','readStreamedLayout','assertStreamedLayoutStates',code)(...Object.values(randomDependencies),math,THREE,(x:number,min:number,max:number)=>Math.max(min,Math.min(max,x)),restoredPlayerPosition,navigator,fetch,{t:(key:string)=>key},()=>5000,StreamedLayoutValidationError,readStreamedLayout,assertStreamedLayoutStates);
@@ -125,3 +126,4 @@ test('no-save initialization retains original first-tick weather selection',asyn
 test('unsupported snapshot version retains existing early-return behavior',()=>{
   const f=fixture();Object.assign(f.runtime,{day:9,minuteOfDay:1000,weather:'cloudy',weatherEpoch:2});const snapshot=fixture().runtime.buildWorldSnapshot();Object.assign(snapshot,{version:2});f.runtime.restoreWorldState(snapshot);assert.equal(f.runtime.day,9);assert.equal(f.runtime.minuteOfDay,1000);assert.equal(f.runtime.weather,'cloudy');assert.equal(f.runtime.weatherEpoch,2);assert.equal(f.draws(),0);
 });
+

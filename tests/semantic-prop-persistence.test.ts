@@ -1,3 +1,4 @@
+import * as npcContinuation from '../src/world/actorContinuation.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -36,7 +37,7 @@ function fixture(snapshot:WorldPersistenceSnapshot|null=null){
   const io={snapshot,epoch:Date.now(),gets:0,setups:0,restores:0,loads:0,failed:false,gate:undefined as Promise<void>|undefined};
   class CoarseWorldRuntime {constructor(_scene?:unknown,readonly seed='latticefolk-default'){}chunks=new Map();setPresentationBridge(){}restoreKnownChunks(){}ensureWindowAround(){}chunkAtWorld(){return undefined;}}
   const load=async()=>{io.loads++;if(io.gate)await io.gate;if(io.failed)throw Error('asset unavailable');return{scene:model(),animations:[]};};
-  const deps={...worldRandom,StreamedLayoutRegistry,...portable,...movable,...crops,THREE,prepareWellGeometry,StreamedLayoutValidationError,readStreamedLayout,assertStreamedLayoutStates,CoarseWorldRuntime,registerHomeTerrain,restoreBuildingForLayout,WORLD_SIZE:72,WATER_PATCH_ASSET:'water',BAKING_OVEN_ASSET:'oven',
+  const deps={...npcContinuation,...worldRandom,StreamedLayoutRegistry,...portable,...movable,...crops,THREE,prepareWellGeometry,StreamedLayoutValidationError,readStreamedLayout,assertStreamedLayoutStates,CoarseWorldRuntime,registerHomeTerrain,restoreBuildingForLayout,WORLD_SIZE:72,WATER_PATCH_ASSET:'water',BAKING_OVEN_ASSET:'oven',
     now:()=>1000,Date:{now:()=>io.epoch},i18n:{t:(key:string)=>key},fetch:async()=>{io.gets++;return{ok:true,json:async()=>({snapshot:io.snapshot,revision:4})};}};
   const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps)),r=new Runtime();
   Object.assign(r,{randomness:worldRandom.readWorldRandomness(undefined),day:1,minuteOfDay:495,weather:'clear',weatherEpoch:1,
@@ -129,3 +130,4 @@ test('semantic-first groups retain the previous authored model placement and sca
   const before=new THREE.Box3().setFromObject(previous),after=new THREE.Box3().setFromObject(group);
   assert.deepEqual(after.min.toArray(),before.min.toArray());assert.deepEqual(after.max.toArray(),before.max.toArray());
 });
+

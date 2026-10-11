@@ -1,3 +1,4 @@
+import {checkpointNpc,restoreNpcContinuation,checkpointWildlife,restoreWildlifeContinuation} from './world/actorContinuation.js';
 import './style.css';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -190,7 +191,6 @@ interface WildlifeRuntime {
   mesh: THREE.Group;
   path: Vec2[];
   pathIndex: number;
-  /** Fine-runtime momentum only; coarse/unloaded simulation does not persist frame velocity. */
   controllerSpeed: number;
   nextDecisionAt: number;
   actionResolved: boolean;
@@ -1281,12 +1281,12 @@ class TownGame {
     for(const [chunkId,runtime] of this.materializedChunks){
       fine.set(chunkId,{
         chunkId,dynamicActivated:true,
-        npcStates:runtime.npcIds.map(id=>this.npcs.get(id)?.state).filter((x):x is NpcState=>Boolean(x)).map(x=>structuredClone(x)),
+        npcStates:runtime.npcIds.map(id=>this.npcs.get(id)).filter((x):x is NpcRuntime=>Boolean(x)).map(x=>checkpointNpc(x,now())),
         objectStates:runtime.objectIds.map(id=>this.objects.get(id)?.state).filter((x):x is WorldObjectState=>Boolean(x)).map(x=>structuredClone(x)),
-        wildlifeStates:runtime.wildlifeIds.map(id=>this.wildlife.get(id)?.state).filter((x):x is WildlifeState=>Boolean(x)).map(x=>structuredClone(x))
+        wildlifeStates:runtime.wildlifeIds.map(id=>this.wildlife.get(id)).filter((x):x is WildlifeRuntime=>Boolean(x)).map(x=>checkpointWildlife(x,now()))
       });
     }
-    const homeNpcs=[...this.npcs.values()].filter(x=>!x.state.chunkId).map(x=>structuredClone(x.state));
+    const homeNpcs=[...this.npcs.values()].filter(x=>!x.state.chunkId).map(x=>checkpointNpc(x,now()));
     const homeObjects=[...this.objects.values()].filter(x=>!x.state.chunkId).map(x=>structuredClone(x.state));
     return {
       version:1,
@@ -1381,6 +1381,7 @@ class TownGame {
       runtime.yieldPlan=undefined;runtime.task=undefined;runtime.path=[];runtime.pathIndex=0;
       this.alignNpcVisualToGround(runtime);
       runtime.nextDecisionAt=now()+700+keyedRandom(this.randomness,'restore-npc-wake',saved.id,randomEventCursor(saved.randomEventCursor))()*1800;
+      restoreNpcContinuation(runtime,now());
     }
 
     for(const saved of snapshot.homeObjects||[]){
@@ -1468,7 +1469,7 @@ class TownGame {
     // session/home state. SQLite save semantics preserve omitted coarse/fine/lineage rows.
     const homeNpcs=[...this.npcs.values()]
       .filter(x=>!x.state.chunkId)
-      .map(x=>structuredClone(x.state));
+      .map(x=>checkpointNpc(x,now()));
     const homeObjects=[...this.objects.values()]
       .filter(x=>!x.state.chunkId)
       .map(x=>structuredClone(x.state));
@@ -1796,6 +1797,7 @@ class TownGame {
     mesh.rotation.y=state.heading??0;mesh.visible=true;
     const agent:NpcRuntime={state,characterAsset,mesh,speechEl,nameEl,mixer,actions,activeAnimation,soles,
       path:[],pathIndex:0,nextDecisionAt:now()+800+keyedRandom(this.randomness,'fine-npc-wake',state.id,randomEventCursor(state.randomEventCursor))()*3500,pendingDecision:false};
+    restoreNpcContinuation(agent,now());
     this.streamedNpcs.remember(agent);
     this.npcs.set(state.id,agent);
 
@@ -1823,6 +1825,7 @@ class TownGame {
     g.position.set(state.position.x,this.groundHeightAt(state.position.x,state.position.z),state.position.z);
     g.visible=true;
     const runtime:WildlifeRuntime={state,mesh:g,path:[],pathIndex:0,controllerSpeed:0,nextDecisionAt:now()+2500+keyedRandom(this.randomness,'wildlife-wake',state.id,randomEventCursor(state.randomEventCursor))()*7000,actionResolved:true};
+    restoreWildlifeContinuation(runtime,now());
     this.streamedWildlife.remember(runtime);
     this.wildlife.set(state.id,runtime);
     if(!this.wildlifePresentation.rebind(visual,runtime))this.wildlifePresentation.register(runtime);
@@ -1991,8 +1994,8 @@ class TownGame {
     const npcStates: NpcState[]=[];
     for(const id of runtime.npcIds){
       const agent=this.npcs.get(id);if(!agent)continue;
+      npcStates.push(checkpointNpc(agent,now()));
       agent.removed=true;agent.task=undefined;agent.path=[];
-      npcStates.push(structuredClone(agent.state));
       agent.speechEl.classList.add('hidden');agent.nameEl.classList.add('hidden');
       agent.speechEl.remove();agent.nameEl.remove();
       this.npcs.delete(id);
@@ -2013,7 +2016,7 @@ class TownGame {
     for(const id of runtime.wildlifeIds){
       const animal=this.wildlife.get(id);if(!animal)continue;
       this.endWildlifeHabitatObservation(animal.state);
-      wildlifeStates.push(structuredClone(animal.state));
+      wildlifeStates.push(checkpointWildlife(animal,now()));
       const species=animal.state.species;
       const fixedWeight=runtime.fixedWildlifeWeights.get(id)||0;
       if(fixedWeight>0){
@@ -4292,3 +4295,4 @@ class TownGame {
 }
 
 new TownGame();
+
