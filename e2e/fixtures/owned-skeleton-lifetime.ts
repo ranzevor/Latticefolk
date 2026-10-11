@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {measureCoarseResourceLifetime} from './coarse-resource-lifetime.js';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {clone} from 'three/examples/jsm/utils/SkeletonUtils.js';
 import {rememberOwnedMeshResources,disposeOwnedMeshResources} from '../../src/scene/ownedMeshResources.js';
@@ -28,5 +29,6 @@ window.skeletonLifetime=(async()=>{
   disposeOwnedSkeletons(instance);disposeOwnedMeshResources(instance);instance.removeFromParent();const released=draw();meshCycles.push({allocated,released});
  }
  const final=draw(),after=renderer.domElement.toDataURL(),triangles=renderer.info.render.triangles;
- return {baseline,cycles,meshCycles,control:{allocated:controlAllocated,detached:controlDetached,disposed:controlDisposed},final,owned,triangles,pixelsIdentical:before===after};
+ const coarse=measureCoarseResourceLifetime(source);
+ return {coarse,baseline,cycles,meshCycles,control:{allocated:controlAllocated,detached:controlDetached,disposed:controlDisposed},final,owned,triangles,pixelsIdentical:before===after};
 })();
