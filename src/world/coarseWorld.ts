@@ -7,7 +7,7 @@ import type {
   WildlifeCompetitionPair, WildlifeDiseasePair, WildlifePredatorPressurePair, WorldDecision, WorldDecisionRequest, WorldDecisionResponse, WorldStrategicSummary
 } from '../types';
 import { applyConservedFlows, planConservedFlows, type WorldFlowRecord } from './flows';
-import { applyWildlifeMigration, ensureWildlifePopulations, plantBiomassTotal, planWildlifeMigration, simulateWildlife, wildlifeCount } from './ecology';
+import { applyWildlifeMigration, ensureWildlifePopulations, planWildlifeMigration, simulateWildlife } from './ecology';
 import { boundedDecisionIdWindow, captureChunkDecisionSignal, nextChunkDecisionDelay, rankChunkDecisionCandidates, type ChunkDecisionSignal } from './decisionScheduling';
 import { CoarseChunkSpatialIndex } from './coarseSpatialIndex';
 import { coarseMarkerVisualSpec, type CoarseMarkerVisualSpec } from '../scene/coarsePresentation';
@@ -719,8 +719,8 @@ export class CoarseWorldRuntime {
       worldPriority:this.worldPolicy.priority,
       worldConnectivity:this.worldPolicy.connectivity,
       worldGrowth:this.worldPolicy.growth,
-      wildlifePopulation:list.reduce((sum,c)=>sum+wildlifeCount(c),0),
-      plantBiomass:list.reduce((sum,c)=>sum+plantBiomassTotal(c),0)/Math.max(1,list.length),
+      wildlifePopulation:list.reduce((sum,c)=>sum+(c.wildlife??[]).reduce((count,population)=>count+population.count,0),0),
+      plantBiomass:list.reduce((sum,c)=>sum+(c.plants?c.plants.grass+c.plants.shrub+c.plants.fruit+c.plants.crop:0),0)/Math.max(1,list.length),
       trophicPrimary:avg(c=>c.trophicFlux?.primaryProduction||0),
       trophicHerbivory:avg(c=>c.trophicFlux?.herbivory||0),
       trophicPredation:avg(c=>c.trophicFlux?.predation||0),

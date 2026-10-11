@@ -4,6 +4,7 @@ import type { StaticCollider,PhysicsTrigger } from '../src/world/finePhysics.js'
 import { startFirstPerson } from './helpers/native-start.js';
 import { lookForObject } from './helpers/relative-look.js';
 import { waitForPlayerZBelow } from './helpers/frame-position.js';
+import { observeReleasedPlayerFrame } from './helpers/released-player-frame.js';
 
 interface TreeView {id:string;height:number;position:{x:number;z:number};collider:StaticCollider;trigger:PhysicsTrigger;}
 interface SoleView {id:string;animation:string;vertices:number;ground:number;sole:number;position:{x:number;z:number};}
@@ -123,6 +124,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   for(const actor of decisionPaused){expect(actor.vertices).toBeGreaterThan(0);expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);}
   await page.keyboard.press('Tab');await page.locator('#pauseBtn').press('Enter');await page.keyboard.press('Tab');
   await expect.poll(async()=>(await soles(page)).some(a=>a.animation==='Walk'||a.animation==='Run'),{timeout:30_000}).toBe(true);
+  const movingFraming=await frameActor();
+  const movingContext=await page.screenshot();
   const frames=await page.evaluate(async()=>{
     const samples:unknown[]=[];
     for(let frame=0;frame<48;frame++){
@@ -133,9 +136,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   });
   expect(frames.flat().some(a=>a.animation==='Walk'||a.animation==='Run')).toBe(true);
   for(const actor of frames.flat())expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);
-  const movingFraming=await frameActor();
   await info.attach('npc-current-skin-support-samples',{body:Buffer.from(JSON.stringify({decisionPaused,frames,pausedFraming,movingFraming},null,2)),contentType:'application/json'});
-  await info.attach('npc-moving-pose-context',{body:await page.screenshot(),contentType:'image/png'});
+  await info.attach('npc-moving-pose-context',{body:movingContext,contentType:'image/png'});
 });
 
 test('native approach respects source head clearance while dialogue and observer shadows remain usable',async({page,request},info)=>{
@@ -177,6 +179,8 @@ test('native approach respects source head clearance while dialogue and observer
     await waitForPlayerZBelow(page,actor.position.z+separation+.25,20_000);
     await page.waitForTimeout(500);
   }finally{await page.keyboard.up('KeyW');}
+  const releasedFrame=await page.evaluate(observeReleasedPlayerFrame,20_000);
+  await info.attach('npc-released-input-frame',{body:Buffer.from(JSON.stringify(releasedFrame)),contentType:'application/json'});
   const contacted=await readView(),contact=contacted.player;
   expect(contact.x).toBeCloseTo(-9,3);
   expect(contact.z-actor.position.z).toBeGreaterThanOrEqual(separation-.0001);

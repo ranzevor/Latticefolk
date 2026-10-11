@@ -1,3 +1,4 @@
+import {prepareVisualPrograms,prepareVisualShadows} from '../src/scene/visualPrograms.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -36,12 +37,12 @@ function fixture(snapshot:WorldPersistenceSnapshot|null=null){
   const io={snapshot,epoch:Date.now(),gets:0,setups:0,restores:0,loads:0,failed:false,gate:undefined as Promise<void>|undefined};
   class CoarseWorldRuntime {constructor(_scene?:unknown,readonly seed='latticefolk-default'){}chunks=new Map();setPresentationBridge(){}restoreKnownChunks(){}ensureWindowAround(){}chunkAtWorld(){return undefined;}}
   const load=async()=>{io.loads++;if(io.gate)await io.gate;if(io.failed)throw Error('asset unavailable');return{scene:model(),animations:[]};};
-  const deps={...worldRandom,StreamedLayoutRegistry,...portable,...movable,...crops,THREE,prepareWellGeometry,StreamedLayoutValidationError,readStreamedLayout,assertStreamedLayoutStates,CoarseWorldRuntime,registerHomeTerrain,restoreBuildingForLayout,WORLD_SIZE:72,WATER_PATCH_ASSET:'water',BAKING_OVEN_ASSET:'oven',
+  const deps={prepareVisualPrograms,prepareVisualShadows,...worldRandom,StreamedLayoutRegistry,...portable,...movable,...crops,THREE,prepareWellGeometry,StreamedLayoutValidationError,readStreamedLayout,assertStreamedLayoutStates,CoarseWorldRuntime,registerHomeTerrain,restoreBuildingForLayout,WORLD_SIZE:72,WATER_PATCH_ASSET:'water',BAKING_OVEN_ASSET:'oven',
     now:()=>1000,Date:{now:()=>io.epoch},i18n:{t:(key:string)=>key},fetch:async()=>{io.gets++;return{ok:true,json:async()=>({snapshot:io.snapshot,revision:4})};}};
   const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps)),r=new Runtime();
   Object.assign(r,{randomness:worldRandom.readWorldRandomness(undefined),day:1,minuteOfDay:495,weather:'clear',weatherEpoch:1,
     playerInventory:{apple:0,bread:0,wood:2,coin:10,flower:0,grain:0,flour:0,water:0,stone:0,plank:0,tool:0},playerPosition:{x:23,z:-2},cameraMode:'firstPerson',camera:{position:new THREE.Vector3()},scene:new THREE.Scene(),
-    assets:new Map(),assetRoot:'/assets/quaternius',gltfLoader:{loadAsync:load},fbxLoader:{loadAsync:async()=>{const asset=await load();return Object.assign(asset.scene,{animations:[]});}},assetLoadFailures:[],assetsReady:false,
+    renderer:{shadowMap:{enabled:false},compileAsync:async(scene:THREE.Object3D)=>scene},assets:new Map(),assetRoot:'/assets/quaternius',gltfLoader:{loadAsync:load},fbxLoader:{loadAsync:async()=>{const asset=await load();return Object.assign(asset.scene,{animations:[]});}},assetLoadFailures:[],assetsReady:false,
     objects:new Map(),npcs:new Map(),wildlife:new Map(),materializedChunks:new Map(),fineChunkCache:new Map(),wildlifeLineage:new Map(),wildlifeTransfers:new Map(),lineageEpoch:0,visualTargets:[],physics:new FinePhysicsAuthority(),
     movableDirty:false,scheduleMovablePersistence(){},groundHeightAt:()=>0,reconcileLineageOffspring(){},updateFineChunkMaterialization(){},worldSeason:()=> 'spring',
     addBuilding(){},addObject(){},addAssetObject(){},addTreeDecoration(){},setupNpcs(){io.setups++;},log(){},toast(){},event(){},itemName:(kind:string)=>kind,parcelLabel:(kind:string,count:number)=>`${kind} ${count}`});
@@ -128,4 +129,38 @@ test('semantic-first groups retain the previous authored model placement and sca
   previous.updateMatrixWorld(true);group.updateMatrixWorld(true);
   const before=new THREE.Box3().setFromObject(previous),after=new THREE.Box3().setFromObject(group);
   assert.deepEqual(after.min.toArray(),before.min.toArray());assert.deepEqual(after.max.toArray(),before.max.toArray());
+});
+
+test('visual targets are attached only after shader preparation finishes',async()=>{
+  const f=fixture();await f.r.initializePersistence();
+  let release!:()=>void,entered!:()=>void;
+  const compiling=new Promise<void>(resolve=>{entered=resolve;});
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  f.r.renderer.compileAsync=async(scene:THREE.Object3D)=>{entered();await gate;return scene;};
+  const loading=f.r.loadVisualAssets();await compiling;
+  assert.equal(f.r.assetsReady,false);
+  assert.equal(f.r.assets.size,0,'unprepared templates were exposed to new visual targets');
+  for(const object of f.r.objects.values())assert.equal(object.mesh.children.length,0);
+  release();await loading;assert.equal(f.r.assetsReady,true);
+  for(const object of f.r.objects.values())assert.ok(object.mesh.children.length>0);
+});
+
+test('shader preparation failures remain asset failures and expose no unprepared template',async()=>{
+  const f=fixture();await f.r.initializePersistence();
+  f.r.renderer.compileAsync=async()=>{throw new Error('shader preparation failed');};
+  await f.r.loadVisualAssets();
+  assert.equal(f.r.assetsReady,false);assert.equal(f.r.assets.size,0);
+  assert.ok(f.r.assetLoadFailures.includes('crate_rts'));
+  for(const object of f.r.objects.values())assert.equal(object.mesh.children.length,0);
+});
+
+for(const fail of [false,true])test(`asset publication follows real shadow staging ${fail?'failure':'success'}`,async()=>{
+ const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0;
+ Object.assign(f.r.renderer,{shadowMap:{enabled:true,needsUpdate:false},getRenderTarget:()=>null,getActiveCubeFace:()=>0,getActiveMipmapLevel:()=>0,
+  getViewport:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissor:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissorTest:()=>false,
+  setRenderTarget(){},setViewport(){},setScissor(){},setScissorTest(){},render(staging:THREE.Scene){
+   assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);rendered++;
+   if(fail)throw new Error('shadow preparation failed');
+  }});
+ await f.r.loadVisualAssets();assert.ok(rendered>0);assert.equal(f.r.assetsReady,!fail);assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetLoadFailures.length,fail?rendered:0);
 });
