@@ -281,3 +281,16 @@ test('bounded NPC conversation reaches the stationary player without getting stu
   await info.attach('npc-autonomous-approach-save',{body:Buffer.from(JSON.stringify({view,distance,utterance,revision:accepted.revision,npc:accepted.snapshot.homeNpcs?.find(n=>n.id==='ren')},null,2)),contentType:'application/json'});
   expect(errors).toEqual([]);
 });
+
+
+test('sourced NPC clone unload returns GPU allocations while the shared actor stays visible',async({page},testInfo)=>{
+ await page.route('**/__skeleton_lifetime.html',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body style="margin:0"><script type="module" src="/e2e/fixtures/owned-skeleton-lifetime.ts"></script></body></html>'}));
+ await page.goto('/__skeleton_lifetime.html');
+ const result=await page.evaluate(async()=>await (window as unknown as {skeletonLifetime:Promise<{baseline:{geometries:number;textures:number};cycles:Array<{allocated:{geometries:number;textures:number};released:{geometries:number;textures:number}}>;control:{allocated:{geometries:number;textures:number};detached:{geometries:number;textures:number};disposed:{geometries:number;textures:number}};final:{geometries:number;textures:number};owned:number;triangles:number;pixelsIdentical:boolean}>}).skeletonLifetime);
+ expect(result.owned).toBeGreaterThan(0);expect(result.triangles).toBeGreaterThan(0);expect(result.cycles).toHaveLength(8);
+ for(const cycle of result.cycles){expect(cycle.allocated.textures).toBeGreaterThan(result.baseline.textures);expect(cycle.released).toEqual(result.baseline);}
+ expect(result.control.allocated.textures).toBeGreaterThan(result.baseline.textures);expect(result.control.detached).toEqual(result.control.allocated);expect(result.control.disposed).toEqual(result.baseline);
+ expect(result.final).toEqual(result.baseline);expect(result.pixelsIdentical).toBe(true);
+ await testInfo.attach('npc-skeleton-gpu-lifecycle',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ await page.screenshot({path:testInfo.outputPath('shared-npc-after-unload.png')});
+});
