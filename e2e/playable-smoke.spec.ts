@@ -494,6 +494,9 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   let notifyCaptured=()=>{};
   const captured=new Promise<void>(resolve=>{notifyCaptured=resolve;});
   let capturedAt=0;
+  const profiler=await page.context().newCDPSession(page);
+  await profiler.send('Profiler.enable');
+  await profiler.send('Profiler.start');
   await page.route('**/api/world/chunks/decide',async route=>{
     if(heldRequest){
       await freshGate;
@@ -527,19 +530,8 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
     try {
       await Promise.race([captured,new Promise<never>((_,reject)=>{captureTimer=setTimeout(()=>reject(new Error('No coarse request within 45000 ms')),45_000);})]);
     } finally {clearTimeout(captureTimer);}
-    const profiler=await page.context().newCDPSession(page);
-    let transition:Awaited<ReturnType<typeof crossCoarseBoundary>>;
-    await profiler.send('Profiler.enable');
-    await profiler.send('Profiler.start');
-    try{
-      transition=await page.evaluate(crossCoarseBoundary);
-      releaseOnce();
-    }finally{
-      try{
-        const {profile}=await profiler.send('Profiler.stop');
-        await testInfo.attach('coarse-transition-cpu-profile',{body:Buffer.from(JSON.stringify(profile)),contentType:'application/json'});
-      }finally{await profiler.detach();}
-    }
+    const transition=await page.evaluate(crossCoarseBoundary);
+    releaseOnce();
     const before=transition.before;
     await testInfo.attach('coarse-native-transition-timing',{body:Buffer.from(JSON.stringify({capturedAt,releasedAt,transition},null,2)),contentType:'application/json'});
     expect(transition.entered).toBe(true);
@@ -571,6 +563,10 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   }finally{
     releaseOnce();releaseFresh();
     await page.unroute('**/api/world/chunks/decide').catch(()=>{});
+    try{
+      const {profile}=await profiler.send('Profiler.stop');
+      await testInfo.attach('coarse-transition-cpu-profile',{body:Buffer.from(JSON.stringify(profile)),contentType:'application/json'});
+    }finally{await profiler.detach();}
   }
 });
 
