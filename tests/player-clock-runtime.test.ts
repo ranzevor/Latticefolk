@@ -16,7 +16,8 @@ const near=(actual:number,expected:number)=>assert.ok(Math.abs(actual-expected)<
 async function fixture(){
   const w=new JSDOM('<html><body><div id="app"></div></body></html>',{url:'https://latticefolk.test',pretendToBeVisual:true}).window;
   const document=w.document as Document;
-  let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0;
+  Object.defineProperty(w.navigator,'scheduling',{value:{isInputPending:()=>inputPending},configurable:true});
+  let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0,inputPending=false;
   const scheduled:Array<(frameAt?:number)=>void>=[],steps:number[]=[],coarseSteps:number[]=[],npcSteps:number[]=[],wildlifeSteps:number[]=[];
   Object.defineProperties(document,{hidden:{get:()=>hidden},hasFocus:{value:()=>focused},pointerLockElement:{get:()=>lockElement},
     exitPointerLock:{value:()=>{lockElement=null;document.dispatchEvent(new w.Event('pointerlockchange'));}}});
@@ -42,7 +43,7 @@ async function fixture(){
   const key=(type:string,code:string,repeat=false,target:EventTarget=w)=>target.dispatchEvent(new w.KeyboardEvent(type,{code,repeat,bubbles:true}));
   const frame=(at:number,frameAt?:number)=>{time=at;const callback=scheduled.shift();assert.ok(callback);callback(frameAt);assert.deepEqual(errors,[]);};
   const look=(movementX:number)=>{const e=new w.MouseEvent('mousemove',{bubbles:true});Object.defineProperties(e,{movementX:{value:movementX},movementY:{value:0}});document.dispatchEvent(e);};
-  return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},renders:()=>renderCalls,
+  return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},renders:()=>renderCalls,
     focus:(value:boolean)=>{focused=value;w.dispatchEvent(new w.Event(value?'focus':'blur'));},
     visible:(value:boolean)=>{hidden=!value;document.dispatchEvent(new w.Event('visibilitychange'));},
     close:()=>{game.controls.dispose();game.orbit.dispose();w.close();}};
@@ -190,5 +191,22 @@ for(const scenario of ['rejected-down','held-release','multiple-keys','blur-reen
     f.at(1100);f.key('keydown','KeyD');f.at(1200);f.key('keyup','KeyD');f.frame(1300);
     near(Math.hypot(f.game.playerPosition.x-before.x,f.game.playerPosition.z-before.z),.45);
     near(f.game.playerInputSeconds-inputBefore,.1);assert.deepEqual(f.errors,[]);
+  }finally{f.close();}
+});
+
+
+test('real animate drains queued input before integrating a delayed native release',async()=>{
+  const f=await fixture();try{
+    for(let at=1000;at<=7000;at+=1000)f.frame(at,at);f.frame(7300,7300);
+    const before=f.steps.reduce((a,b)=>a+b,0);
+    f.pending(true);f.frame(7776.2,7495.4);f.frame(8202.4,8062);
+    f.at(8511.4);f.game.playerMovementKey('KeyD',true,false,7430.6);
+    f.frame(8657.5,8445.3);f.frame(8945.6,8795.3);
+    near(f.game.playerInputSeconds,0);near(f.steps.reduce((a,b)=>a+b,0),before);
+    f.at(9119.3);f.game.playerMovementKey('KeyD',false,false,7684);
+    f.pending(false);f.frame(9428.9,9278.6);
+    near(f.game.playerInputSeconds,.2534);near(f.game.playerPosition.x,.2534*4.5);
+    f.frame(9500,9500);near(f.steps.reduce((a,b)=>a+b,0),9.5);
+    near(f.game.simulationClock.diagnostics.pendingSeconds,0);
   }finally{f.close();}
 });

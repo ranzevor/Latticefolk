@@ -1124,6 +1124,8 @@ class TownGame {
     requestAnimationFrame(this.animate);
     if(this.persistenceReady&&!document.hidden&&document.hasFocus()){
       if(!this.playerInputAllowed())this.resetPlayerInput();
+      const scheduling=(navigator as Navigator&{scheduling?:{isInputPending:(options:{includeContinuous:boolean})=>boolean}}).scheduling;
+      if(this.playerInputAllowed()&&scheduling?.isInputPending({includeContinuous:true}))return;
       if(!this.simulationClock.advanceFrame(frameAt,now(),(dt,input)=>this.simulateStep(dt,input)))this.resetPlayerInput();
       if(now()-this.lastPersistenceSaveAt>15000)void this.saveWorldState();
     }else this.resetSimulationClock();
