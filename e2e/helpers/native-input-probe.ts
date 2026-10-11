@@ -10,7 +10,7 @@ const selected=new Set([
 ]);
 
 export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async({page},use,info)=>{
-  if(!selected.has(info.title)||(process.env.LATTICEFOLK_NATIVE_INPUT_PROBE!=='1'&&info.title!==lateWildlife)){await use();return;}
+  if(!selected.has(info.title)){await use();return;}
   const session=await page.context().newCDPSession(page);
   const report={test:info.title,hostTimeOrigin:performance.timeOrigin,pulses:[] as unknown[],routes:[] as unknown[],errors:[] as string[]};
   await page.exposeBinding('__latticeNativePulse',async(_source,request:NativePulseRequest&{routeId:string;browserIssuedAt:number})=>{
