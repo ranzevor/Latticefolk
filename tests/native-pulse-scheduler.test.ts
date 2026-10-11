@@ -80,6 +80,16 @@ test('a historical event timestamp cannot be substituted after an already consum
 const source=fs.readFileSync(new URL('../e2e/helpers/native-waypoint.ts',import.meta.url),'utf8');
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function driveNativeWaypoint','async function driveNativeWaypoint')+'\ndriveNativeWaypoint;';
+test('a native pulse already reflected in the rendered diagnostic needs no extra frame',async()=>{
+ let x=0,inputSeconds=0,finished=0;
+ const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?String(x):key==='playerZ'?'0':key==='playerInputSeconds'?String(inputSeconds):key==='simulationClock'?JSON.stringify({pendingSeconds:0}):'[]'});
+ const context={performance:{now:()=>100,timeOrigin:100000},setTimeout,clearTimeout,cancelAnimationFrame(){},
+  requestAnimationFrame(){throw Error('redundant frame after applied native pulse');},
+  window:{nativeInputProbe:{start(){},async pulse(){x=1;inputSeconds=1/4.5;},async finish(){finished++;}},dispatchEvent(){throw Error('unexpected synthetic key');}},
+  document:{pointerLockElement:canvas,querySelector:(s:string)=>s==='#game canvas'?canvas:{dataset}}};
+ const result=await vm.runInNewContext(callback,context)({target:{x:1,z:0},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
+ assert.equal(result.reached,true);assert.equal(result.inputSeconds,1/4.5);assert.equal(finished,1);
+});
 async function probeRoute(options:{releaseDelay?:number;fail?:boolean}={}){
   let x=34,finished=0;const starts:unknown[]=[],pulses:NativePulseRequest[]=[];
   const clock=nativeInputClock({frameMs:500,onStep:(dt,keys)=>{x+=(Number(keys.has('KeyD'))-Number(keys.has('KeyA')))*(keys.has('ShiftLeft')?7.2:4.5)*dt;}});
