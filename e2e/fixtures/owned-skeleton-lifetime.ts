@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {clone} from 'three/examples/jsm/utils/SkeletonUtils.js';
+import {rememberOwnedMeshResources,disposeOwnedMeshResources} from '../../src/scene/ownedMeshResources.js';
 import {disposeOwnedSkeletons} from '../../src/scene/ownedSkeletons.js';
 
 declare global {interface Window {skeletonLifetime:Promise<unknown>;}}
@@ -19,6 +20,13 @@ window.skeletonLifetime=(async()=>{
   const released=draw();cycles.push({allocated,released});
  }
  const unreleased=clone(source);scene.add(unreleased);const controlAllocated=draw();unreleased.removeFromParent();const controlDetached=draw();disposeOwnedSkeletons(unreleased);const controlDisposed=draw();
+ const meshCycles:unknown[]=[];
+ for(let cycle=0;cycle<8;cycle++){
+  const instance=clone(source),materials=new Set<THREE.Material>();
+  instance.traverse(node=>{const mesh=node as THREE.Mesh;if(!mesh.isMesh)return;mesh.geometry=mesh.geometry.clone();mesh.material=Array.isArray(mesh.material)?mesh.material.map(material=>material.clone()):mesh.material.clone();for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])materials.add(material);});
+  rememberOwnedMeshResources(instance,materials);scene.add(instance);const allocated=draw();
+  disposeOwnedSkeletons(instance);disposeOwnedMeshResources(instance);instance.removeFromParent();const released=draw();meshCycles.push({allocated,released});
+ }
  const final=draw(),after=renderer.domElement.toDataURL(),triangles=renderer.info.render.triangles;
- return {baseline,cycles,control:{allocated:controlAllocated,detached:controlDetached,disposed:controlDisposed},final,owned,triangles,pixelsIdentical:before===after};
+ return {baseline,cycles,meshCycles,control:{allocated:controlAllocated,detached:controlDetached,disposed:controlDisposed},final,owned,triangles,pixelsIdentical:before===after};
 })();

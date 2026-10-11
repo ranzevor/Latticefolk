@@ -1,4 +1,5 @@
 import {disposeOwnedSkeletons} from './scene/ownedSkeletons.js';
+import {rememberOwnedMeshResources,disposeOwnedMeshResources} from './scene/ownedMeshResources.js';
 import './style.css';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -305,7 +306,7 @@ class TownGame {
     this.visualTargets=this.visualTargets.filter(target=>target.group!==agent.mesh);
   });
   readonly streamedWildlife=new StreamedActors<WildlifeRuntime>(animal=>{
-    this.wildlifePresentation.remove(animal);animal.mesh.removeFromParent();
+    this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.removeFromParent();
   });
   assetRoot = '/assets/quaternius';
   assetsReady = false;
@@ -1935,6 +1936,7 @@ class TownGame {
       }
     }
     g.traverse(o=>{const mesh=o as THREE.Mesh;if(mesh.isMesh){mesh.castShadow=true;mesh.receiveShadow=true;}});
+    rememberOwnedMeshResources(g,[bodyMaterial,accentMaterial,featureMaterial]);
     return g;
   }
 
@@ -2985,7 +2987,7 @@ class TownGame {
       this.lineageEpoch++;
     }
     animal.removed=true;
-    if(!this.streamedWildlife.remove(animal)){this.wildlifePresentation.remove(animal);animal.mesh.parent?.remove(animal.mesh);}
+    if(!this.streamedWildlife.remove(animal)){this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.parent?.remove(animal.mesh);}
     this.wildlife.delete(animal.state.id);
     this.event(`${this.wildlifeName(animal.state.species)} ${animal.state.id} ${i18n.t(`evolution.death.${reason}`)}。`);
   }

@@ -6,6 +6,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import * as THREE from 'three';
 import {disposeOwnedSkeletons} from '../src/scene/ownedSkeletons.js';
+import {disposeOwnedMeshResources} from '../src/scene/ownedMeshResources.js';
 import * as layouts from '../src/world/streamedLayouts.js';
 import * as units from '../src/world/streamedUnits.js';
 import * as movable from '../src/world/movablePhysics.js';
@@ -45,7 +46,7 @@ const code=ts.transpileModule(`return class Runtime {objects=new Map();${members
 function fixture(snapshot:WorldPersistenceSnapshot|null=null,realActors=false){
   const io={snapshot,gets:0,writes:0,beacons:0,epoch:Date.now(),store:undefined as WorldPersistence|undefined,writeGate:undefined as Promise<void>|undefined};
   const document=new JSDOM('<div id="speech"></div>').window.document;
-  const deps={disposeOwnedSkeletons,...worldRandom,document,ui:{speechLayer:document.querySelector('#speech')},StreamedActors,Date:{now:()=>io.epoch},navigator:{sendBeacon(){io.beacons++;return true;}},THREE,...layouts,...units,...movable,...portable,...baking,...water,...trees,...crops,playerHeadClearance,NPC_BODY_RADIUS,StreamedPresentation,planFineChunk,registerFineTerrainForChunk,restoreBuildingForLayout,droppedParcelSpec,
+  const deps={disposeOwnedMeshResources,disposeOwnedSkeletons,...worldRandom,document,ui:{speechLayer:document.querySelector('#speech')},StreamedActors,Date:{now:()=>io.epoch},navigator:{sendBeacon(){io.beacons++;return true;}},THREE,...layouts,...units,...movable,...portable,...baking,...water,...trees,...crops,playerHeadClearance,NPC_BODY_RADIUS,StreamedPresentation,planFineChunk,registerFineTerrainForChunk,restoreBuildingForLayout,droppedParcelSpec,
     clamp:(x:number,a:number,b:number)=>Math.max(a,Math.min(b,x)),now:()=>1000,i18n:{t:(key:string)=>key},fetch:async(_url:string,init?:{method?:string;body?:string})=>{
       if(init?.method==='POST'){io.writes++;const data=JSON.parse(init.body!);if(io.writeGate)await io.writeGate;const saved=io.store!.save(data.snapshot,data.expectedRevision);return{ok:true,status:200,json:async()=>saved};}
       io.gets++;return{ok:true,json:async()=>({revision:io.store?.revision()??3,snapshot:io.store?.load()??io.snapshot})};
