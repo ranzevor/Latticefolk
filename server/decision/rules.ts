@@ -1,14 +1,22 @@
 import type { DecisionRequest, DecisionResponse, DialogueEntry, DialogueRequest, DialogueResponse, DecisionAction, SocialIntent, StateShift, ChunkDecisionRequest, ChunkDecisionResponse, ChunkDecision, ChunkStrategy, ChunkMigrationPolicy, ChunkEcologyPolicy, RegionDecisionRequest, RegionDecisionResponse, RegionDecision, RegionPriority, RegionMovementPolicy, RegionEcologyPolicy, WorldDecisionRequest, WorldDecisionResponse, WorldDecision, WorldPriority, WorldConnectivityPolicy, WorldGrowthPolicy, WildlifeDecisionBatchRequest, WildlifeDecisionBatchResponse, WildlifeDecisionResult, WildlifeAction } from '../../src/types.js';
+import { randomFromKey, type RandomSource } from '../../src/world/worldRandom.js';
 import { wildlifeLifeHistory } from '../../src/world/wildlifeLifeHistory.js';
-import { canWildlifePredate, isWildlifePredator, wildlifeSpeciesProfile } from '../../src/world/wildlifeSpecies.js';
+import { canWildlifePredate, isWildlifePredator, wildlifeSpeciesProfile, wildlifeResourceSupportsAction } from '../../src/world/wildlifeSpecies.js';
 import { normalizeWildlifePhenotype, wildlifeBehaviorThresholds } from '../../src/world/wildlifePhenotype.js';
 import { normalizeWildlifeOrganismGenome, wildlifeResourceNicheScore } from '../../src/world/organismFamilies.js';
 
-function pick<T>(arr: T[], fallback: T): T {
-  return arr.length ? arr[Math.floor(Math.random() * arr.length)] : fallback;
+function requestRandom(domain:string,value:unknown):RandomSource {
+  const key=JSON.stringify(value,(_key,entry)=>entry&&typeof entry==='object'&&!Array.isArray(entry)
+    ?Object.fromEntries(Object.keys(entry).sort().map(key=>[key,entry[key]])):entry);
+  return randomFromKey(`${domain}:${key}`);
+}
+
+function pick<T>(arr:T[],fallback:T,random:RandomSource):T {
+  return arr.length?arr[Math.floor(random()*arr.length)]:fallback;
 }
 
 export function fallbackDecision(req: DecisionRequest): DecisionResponse {
+  const random=requestRandom('fallback-decision-v1',req);
   const n = req.npc;
   const actions = new Set(req.allowedActions);
   let action: DecisionAction = req.allowedActions.includes('idle') ? 'idle' : (req.allowedActions[0] ?? 'idle');
@@ -20,16 +28,16 @@ export function fallbackDecision(req: DecisionRequest): DecisionResponse {
   else if (n.energy <= 18 && actions.has('sleep')) { action = 'sleep'; reasonCode = 'need_sleep'; }
   else if (n.energy <= 32 && actions.has('rest')) { action = 'rest'; reasonCode = 'need_energy'; }
   else if (n.social <= 28 && req.world.nearbyNpcs.length && actions.has('visit')) { action = 'visit'; reasonCode = 'need_social_visit'; }
-  else if (role==='guard' && actions.has('patrol') && Math.random()<.52) { action='patrol'; reasonCode='role_patrol'; }
-  else if (role==='farmer' && actions.has('harvest') && hour>=7 && hour<=17 && Math.random()<.58) { action='harvest'; reasonCode='role_harvest'; }
-  else if ((role==='baker'||role==='maker') && actions.has('craft') && hour>=8 && hour<=18 && Math.random()<.52) { action='craft'; reasonCode='role_craft'; }
-  else if (role==='shopkeeper' && actions.has('trade') && hour>=8 && hour<=19 && Math.random()<.56) { action='trade'; reasonCode='role_trade'; }
-  else if (actions.has('deliver') && n.inventory.some(i=>i.count>0) && Math.random()<.22) { action='deliver'; reasonCode='social_delivery'; }
-  else if (actions.has('gift') && n.inventory.some(i=>i.count>0) && n.social<55 && Math.random()<.15) { action='gift'; reasonCode='social_gift'; }
-  else if (actions.has('fetch_water') && !n.inventory.some(i=>i.kind==='water'&&i.count>0) && Math.random()<.25) { action='fetch_water'; reasonCode='resource_water'; }
-  else if (actions.has('work') && hour >= 8 && hour <= 17 && Math.random() < .42) { action = 'work'; reasonCode = 'schedule_work'; }
-  else if (req.world.nearbyObjects.some(o => o.pickupable) && actions.has('pickup') && Math.random() < .18) { action = 'pickup'; reasonCode = 'opportunistic_pickup'; }
-  else if (actions.has('explore') && Math.random()<.18) { action='explore'; reasonCode='curiosity_explore'; }
+  else if (role==='guard' && actions.has('patrol') && random()<.52) { action='patrol'; reasonCode='role_patrol'; }
+  else if (role==='farmer' && actions.has('harvest') && hour>=7 && hour<=17 && random()<.58) { action='harvest'; reasonCode='role_harvest'; }
+  else if ((role==='baker'||role==='maker') && actions.has('craft') && hour>=8 && hour<=18 && random()<.52) { action='craft'; reasonCode='role_craft'; }
+  else if (role==='shopkeeper' && actions.has('trade') && hour>=8 && hour<=19 && random()<.56) { action='trade'; reasonCode='role_trade'; }
+  else if (actions.has('deliver') && n.inventory.some(i=>i.count>0) && random()<.22) { action='deliver'; reasonCode='social_delivery'; }
+  else if (actions.has('gift') && n.inventory.some(i=>i.count>0) && n.social<55 && random()<.15) { action='gift'; reasonCode='social_gift'; }
+  else if (actions.has('fetch_water') && !n.inventory.some(i=>i.kind==='water'&&i.count>0) && random()<.25) { action='fetch_water'; reasonCode='resource_water'; }
+  else if (actions.has('work') && hour >= 8 && hour <= 17 && random() < .42) { action = 'work'; reasonCode = 'schedule_work'; }
+  else if (req.world.nearbyObjects.some(o => o.pickupable) && actions.has('pickup') && random() < .18) { action = 'pickup'; reasonCode = 'opportunistic_pickup'; }
+  else if (actions.has('explore') && random()<.18) { action='explore'; reasonCode='curiosity_explore'; }
   else if (actions.has('wander')) { action = 'wander'; reasonCode = 'fallback_wander'; }
 
   const targetNpcId = ['talk','visit','trade','gift','deliver'].includes(action) ? req.world.nearbyNpcs[0]?.id : undefined;
@@ -44,7 +52,7 @@ export function fallbackDecision(req: DecisionRequest): DecisionResponse {
   if (action === 'fetch_water') targetObjectId = req.world.nearbyObjects.find(o => o.kind==='well')?.id;
   if (action === 'trade' && !targetNpcId) targetObjectId = req.world.nearbyObjects.find(o => o.kind==='food_stall')?.id;
 
-  const socialIntent: SocialIntent = pick(['greet','smalltalk','share_news'] as SocialIntent[], 'smalltalk');
+  const socialIntent: SocialIntent = pick(['greet','smalltalk','share_news'] as SocialIntent[], 'smalltalk',random);
   let stateShift: StateShift = 'stable';
   if (n.energy < 30) stateShift = 'energy_conserve';
   else if (n.social < 30) stateShift = 'social_seek';
@@ -54,13 +62,14 @@ export function fallbackDecision(req: DecisionRequest): DecisionResponse {
 }
 
 export function fallbackDialogue(req: DialogueRequest, candidates: DialogueEntry[], fragments: { opener: DialogueEntry[]; body: DialogueEntry[]; closer: DialogueEntry[] }): DialogueResponse {
+  const random=requestRandom('fallback-dialogue-v1',{req,candidates,fragments});
   if (candidates.length) {
-    const e = pick(candidates.slice(0, 8), candidates[0]);
+    const e = pick(candidates.slice(0, 8), candidates[0],random);
     return { source:'fallback', mode:'line', text:e.text, selectedIds:[e.id], confidence:.4, relationEffect: req.intent === 'complain' ? 'neutral' : 'positive' };
   }
-  const o = pick(fragments.opener, undefined as any);
-  const b = pick(fragments.body, undefined as any);
-  const c = pick(fragments.closer, undefined as any);
+  const o = pick(fragments.opener, undefined as any,random);
+  const b = pick(fragments.body, undefined as any,random);
+  const c = pick(fragments.closer, undefined as any,random);
   const selected = [o,b,c].filter(Boolean) as DialogueEntry[];
   return {
     source:'fallback', mode:'fragments', text:selected.map(x => x.text).join('') || '……',
@@ -190,7 +199,7 @@ export function fallbackWildlifeDecisions(req: WildlifeDecisionBatchRequest): Wi
     const genome=normalizeWildlifeOrganismGenome(animal.species,animal.organismGenome,animal.id);
     const thresholds=wildlifeBehaviorThresholds(phenotype);
     const forageResource=()=>entry.world.nearbyResources
-      .filter(resource=>resource.tags.some(tag=>profile.forageTags.includes(tag)))
+      .filter(resource=>wildlifeResourceSupportsAction(animal.species,profile.feedingAction,resource))
       .sort((a,b)=>wildlifeResourceNicheScore(animal.species,genome,b.tags,b.distance)-wildlifeResourceNicheScore(animal.species,genome,a.tags,a.distance)||a.distance-b.distance)[0];
     const nearbyPredator=entry.world.nearbyWildlife.find(x=>canWildlifePredate(x.species,animal.species)&&x.distance<thresholds.fleeDistance);
     const sameMate=entry.world.nearbyWildlife.find(x=>x.species===animal.species&&x.id!==animal.id&&x.sex!==animal.sex&&x.mateAvailable&&x.distance<8);
@@ -211,7 +220,7 @@ export function fallbackWildlifeDecisions(req: WildlifeDecisionBatchRequest): Wi
       action='flee';targetWildlifeId=nearbyPredator.id;reasonCode='predator_nearby';
     }else if(animal.thirst>=72&&entry.allowedActions.includes('drink')){
       action='drink';
-      targetObjectId=entry.world.nearbyResources.find(x=>x.tags.includes('water'))?.id;
+      targetObjectId=entry.world.nearbyResources.find(x=>wildlifeResourceSupportsAction(animal.species,'drink',x))?.id;
       reasonCode='thirst';
     }else if(animal.hunger>=thresholds.hungerThreshold){
       if(isWildlifePredator(animal.species)&&entry.allowedActions.includes('hunt')){
@@ -246,3 +255,4 @@ export function fallbackWildlifeDecisions(req: WildlifeDecisionBatchRequest): Wi
   });
   return {source:'fallback',decisions};
 }
+

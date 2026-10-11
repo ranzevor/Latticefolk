@@ -27,6 +27,7 @@ import { WildlifePresentation } from './scene/wildlifePresentation';
 import { WildlifeVisualRuntime } from './scene/wildlifeVisualRuntime';
 import { SunShadowView } from './scene/sunShadow';
 import {GodCameraInput,isGodCameraInputKey,type GodCameraInputStep} from './scene/godCameraInput';
+import {SimulationClock,isPlayerMovementKey,type PlayerMovementInput} from './world/simulationClock';
 import { prepareWellGeometry } from './scene/wellPresentation';
 import { characterOverlay } from './scene/characterOverlay';
 import { PLAYER_BODY_RADIUS, NPC_BODY_RADIUS, characterHeadEnvelope, playerHeadClearance, playerHeadConstraint, npcHeadConstraint, safeNpcHeading, npcPlayerSeparation, PLAYER_CONVERSATION_REACH, reachedPlayerConversation } from './world/characterContact';
@@ -37,7 +38,7 @@ import { BAKING_OVEN_ASSET, bakingOvenVisualSpec, bakingOvenPhysics, isBakingOve
 import { applyFineWildlifePopulationTransfer, areAdjacentChunks, fineMigrationEntryPoint, foldFineWildlifePopulationCount } from './world/fineWildlifeMigration';
 import { accumulateWildlifeHabitatExposure, computeEvolutionStatistics, computeWildlifeCoevolutionEvidence, computeWildlifeInteractionSelectionEvidence, dominantWildlifeExposureBiome, lineageAncestors } from './world/evolution';
 import { wildlifeLifeHistory as getWildlifeLifeHistory } from './world/wildlifeLifeHistory';
-import { canWildlifePredate, isWildlifePredator, WILDLIFE_SPECIES, wildlifeHungerRelief, wildlifePredationDamage, wildlifeSpeciesProfile } from './world/wildlifeSpecies';
+import { canWildlifePredate, isWildlifePredator, WILDLIFE_SPECIES, wildlifeHungerRelief, wildlifePredationDamage, wildlifeSpeciesProfile, wildlifeResourceSupportsAction } from './world/wildlifeSpecies';
 import { effectiveWildlifeMorphology, inheritWildlifePhenotype, normalizeWildlifePhenotype, wildlifeFunctionalPhenotype } from './world/wildlifePhenotype';
 import { inheritWildlifeOrganismGenome, normalizeWildlifeOrganismGenome, wildlifeGenomePlantConsumptionWeights, wildlifeOrganismLocomotion, wildlifeResourceNicheScore } from './world/organismFamilies';
 import { recordWildlifeAttackReceived, recordWildlifeFleeOutcome, recordWildlifeHuntOutcome } from './world/predationOutcomes';
@@ -225,7 +226,7 @@ class TownGame {
   renderer = new THREE.WebGLRenderer({antialias:true});
   controls: PointerLockControls;
   orbit: OrbitControls;
-  clock = new THREE.Clock();
+  readonly simulationClock = new SimulationClock();
   sun = new THREE.DirectionalLight(0xffffff, 1.5);
   sunShadow = new SunShadowView(this.sun);
   shadowFocus = new THREE.Vector3();
@@ -373,6 +374,8 @@ class TownGame {
     this.refreshHealth();
     void this.initializePersistence().then(()=>{
       void this.loadVisualAssets();
+      this.simulationClock.reset();
+      if(this.playerInputAllowed())this.recordPlayerInput();
       this.animate();
     });
     this.log('Latticefolk 已启动；未配置远程决策引擎时使用本地规则 provider。','developer');
@@ -899,25 +902,26 @@ class TownGame {
     addEventListener('resize',()=>{ this.camera.aspect=innerWidth/innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(innerWidth,innerHeight); });
     addEventListener('keydown',(e)=>{
       const tag=(e.target as HTMLElement | null)?.tagName;
-      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(e.target as HTMLElement|null)?.isContentEditable){this.resetGodCameraInput();return;}
+      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(e.target as HTMLElement|null)?.isContentEditable){this.resetPlayerInput();this.resetGodCameraInput();return;}
       if(e.code==='Escape'&&this.interactionOpen){e.preventDefault();this.closeInteractionMenu(true);return;}
-      if (e.code==='Tab') { e.preventDefault(); this.resetGodCameraInput();ui.admin.classList.toggle('hidden'); return; }
+      if (e.code==='Tab') { e.preventDefault(); this.resetPlayerInput();this.resetGodCameraInput();ui.admin.classList.toggle('hidden'); return; }
       if (e.code==='KeyG') { e.preventDefault(); this.toggleCameraMode(); return; }
       if (e.code==='KeyF' && this.cameraMode==='god') { this.focusSelected(); return; }
       if (e.code==='Space' && this.cameraMode==='god') { e.preventDefault(); this.focusTown(); return; }
       if (e.code==='KeyE' && this.cameraMode==='firstPerson') { this.interact(); return; }
       if(this.cameraMode==='god'&&isGodCameraInputKey(e.code)){this.godCameraKey(e.code,true,e.repeat);return;}
-      this.keys.add(e.code);
+      if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,true,e.repeat,e.isTrusted?e.timeStamp:undefined);
     });
-    addEventListener('keyup',(e)=>{this.keys.delete(e.code);if(this.cameraMode==='god'&&isGodCameraInputKey(e.code))this.godCameraKey(e.code,false);});
-    addEventListener('blur',()=>{this.keys.clear();this.resetGodCameraInput();});
-    addEventListener('focus',()=>this.resetGodCameraInput());
-    document.addEventListener('visibilitychange',()=>{this.keys.clear();this.resetGodCameraInput();});
-    document.addEventListener('focusin',()=>{if(!this.godCameraInputAllowed())this.resetGodCameraInput();});
+    addEventListener('keyup',(e)=>{if(isPlayerMovementKey(e.code))this.playerMovementKey(e.code,false,false,e.isTrusted?e.timeStamp:undefined);if(this.cameraMode==='god'&&isGodCameraInputKey(e.code))this.godCameraKey(e.code,false);});
+    addEventListener('blur',()=>this.resetSimulationClock());
+    addEventListener('focus',()=>this.resetSimulationClock());
+    document.addEventListener('visibilitychange',()=>this.resetSimulationClock());
+    document.addEventListener('focusin',()=>{if(!this.playerInputAllowed())this.resetPlayerInput();if(!this.godCameraInputAllowed())this.resetGodCameraInput();});
+    document.addEventListener('mousemove',()=>{if(this.playerInputAllowed())this.recordPlayerInput();});
     document.querySelector('#startBtn')!.addEventListener('click',()=>{this.cameraMode='firstPerson';this.controls.lock();});
     ui.modeBtn.addEventListener('click',()=>this.toggleCameraMode());
-    this.controls.addEventListener('lock',()=>{this.resetGodCameraInput();ui.overlay.classList.add('hidden');});
-    this.controls.addEventListener('unlock',()=>{this.keys.clear();this.resetGodCameraInput();if(this.cameraMode==='firstPerson'&&!this.interactionOpen)ui.overlay.classList.remove('hidden');});
+    this.controls.addEventListener('lock',()=>{this.resetPlayerInput();this.resetGodCameraInput();ui.overlay.classList.add('hidden');});
+    this.controls.addEventListener('unlock',()=>{this.resetPlayerInput();this.resetGodCameraInput();if(this.cameraMode==='firstPerson'&&!this.interactionOpen)ui.overlay.classList.remove('hidden');});
     document.querySelector('#interactionClose')!.addEventListener('click',()=>this.closeInteractionMenu(true));
     ui.localeSelect.addEventListener('change',()=>this.changeLocale(ui.localeSelect.value));
     document.querySelectorAll<HTMLInputElement>('#jevBudgetPanel input').forEach(input=>input.addEventListener('input',()=>{this.budgetInputVersion++;}));
@@ -952,7 +956,7 @@ class TownGame {
 
   enterGodMode() {
     if(this.cameraMode==='god')return;
-    this.keys.clear();this.resetGodCameraInput();
+    this.resetPlayerInput();this.resetGodCameraInput();
     this.playerPosition={x:this.camera.position.x,z:this.camera.position.z};
     this.firstPersonRotation.copy(this.camera.rotation);
     this.cameraMode='god';
@@ -974,7 +978,7 @@ class TownGame {
 
   enterFirstPerson() {
     if(this.cameraMode==='firstPerson')return;
-    this.keys.clear();this.resetGodCameraInput();
+    this.resetPlayerInput();this.resetGodCameraInput();
     this.cameraMode='firstPerson';
     this.perceptionEpoch++;
     this.orbit.enabled=false;
@@ -1078,31 +1082,65 @@ class TownGame {
     }catch(e){this.toast(i18n.t('dialogue.import.failed',{error:e instanceof Error?e.message:String(e)}));}
   }
 
-  animate = () => {
-    requestAnimationFrame(this.animate);
-    const dt=Math.min(.05,this.clock.getDelta());
+  resetPlayerInput(){this.keys.clear();this.simulationClock.clearInput();}
+
+  resetSimulationClock(){this.resetPlayerInput();this.simulationClock.reset();this.resetGodCameraInput();}
+
+  playerInputAllowed(requireReady=true) {
+    const active=document.activeElement as HTMLElement|null;
+    return (!requireReady||this.persistenceReady)&&this.cameraMode==='firstPerson'&&this.controls.isLocked&&!document.hidden&&document.hasFocus()&&!this.interactionOpen&&
+      ui.admin.classList.contains('hidden')&&ui.overlay.classList.contains('hidden')&&
+      !active?.matches('input,textarea,select')&&!active?.isContentEditable;
+  }
+
+  playerMovementKey(code:string,down:boolean,repeat=false,eventAt?:number) {
+    if(!this.playerInputAllowed(false)){this.resetPlayerInput();return;}
+    if(repeat||this.keys.has(code)===down)return;
+    if(down)this.keys.add(code);else this.keys.delete(code);
+    if(this.persistenceReady)this.recordPlayerInput(eventAt);
+  }
+
+  recordPlayerInput(eventAt?:number) {
+    const forward=Number(this.keys.has('KeyW'))-Number(this.keys.has('KeyS'));
+    const right=Number(this.keys.has('KeyD'))-Number(this.keys.has('KeyA'));
+    const direction=new THREE.Vector3();this.camera.getWorldDirection(direction);direction.y=0;direction.normalize();
+    if(!this.simulationClock.recordEvent(eventAt,now(),forward||right?{forward,right,sprint:this.keys.has('ShiftLeft'),directionX:direction.x,directionZ:direction.z}:undefined))this.keys.clear();
+  }
+
+  simulateStep(dt:number,input:PlayerMovementInput|undefined) {
     this.playerTravel=undefined;this.playerBlockedNpcs.clear();
-    if(this.cameraMode==='firstPerson'){this.updatePlayer(dt);if(this.persistenceReady)this.updateFineChunkMaterialization();}else this.updateGodCamera();
-    if(this.persistenceReady){
-      this.updateTime(dt);
-      this.coarseWorld.update({day:this.day,gameTime:this.gameTimeText(),weather:this.weather,dt});
-      this.updateObjects(dt);
-      this.updateNpcs(dt);
-      this.updateWildlife(dt);
-      if(now()-this.lastPersistenceSaveAt>15000)void this.saveWorldState();
+    if(this.cameraMode==='firstPerson'){
+      this.updatePlayer(dt,input??{forward:0,right:0,sprint:false,directionX:0,directionZ:-1});
+      this.updateFineChunkMaterialization();
     }
+    this.updateTime(dt);
+    this.coarseWorld.update({day:this.day,gameTime:this.gameTimeText(),weather:this.weather,dt});
+    this.updateObjects(dt);
+    this.updateNpcs(dt);
+    this.updateWildlife(dt);
+  }
+
+  animate = (frameAt?:number) => {
+    requestAnimationFrame(this.animate);
+    if(this.persistenceReady&&!document.hidden&&document.hasFocus()){
+      if(!this.playerInputAllowed())this.resetPlayerInput();
+      if(!this.simulationClock.advanceFrame(frameAt,now(),(dt,input)=>this.simulateStep(dt,input)))this.resetPlayerInput();
+      if(now()-this.lastPersistenceSaveAt>15000)void this.saveWorldState();
+    }else this.resetSimulationClock();
+    if(this.cameraMode==='god')this.updateGodCamera();
     this.updateCameraShadow();
     this.updateRaycast(); this.updateUi(); this.updateSpeech(); this.updateSelectionVisuals();
     if(now()-this.lastHealthPoll>10000) this.refreshHealth();
     this.renderer.render(this.scene,this.camera);
   };
 
-  updatePlayer(dt:number) {
+  updatePlayer(dt:number,input?:PlayerMovementInput) {
     if(this.interactionOpen||!this.controls.isLocked)return;
     let f=0,r=0;if(this.keys.has('KeyW'))f+=1;if(this.keys.has('KeyS'))f-=1;if(this.keys.has('KeyD'))r+=1;if(this.keys.has('KeyA'))r-=1;
+    if(input){f=input.forward;r=input.right;}
     if(f||r){
-      const speed=(this.keys.has('ShiftLeft')?7.2:4.5)*dt;
-      const dir=new THREE.Vector3();this.camera.getWorldDirection(dir);dir.y=0;dir.normalize();
+      const speed=((input?input.sprint:this.keys.has('ShiftLeft'))?7.2:4.5)*dt;
+      const dir=new THREE.Vector3();if(input)dir.set(input.directionX,0,input.directionZ);else this.camera.getWorldDirection(dir);dir.y=0;dir.normalize();
       const right=new THREE.Vector3(-dir.z,0,dir.x);const move=dir.multiplyScalar(f).add(right.multiplyScalar(r)).normalize().multiplyScalar(speed);
       const moveInput=()=>({
         id:'player',position:{x:this.camera.position.x,z:this.camera.position.z},
@@ -2398,7 +2436,7 @@ class TownGame {
 
     if(decision.action==='drink'||decision.action==='graze'||decision.action==='forage'){
       const chosen=decision.targetObjectId?this.objects.get(decision.targetObjectId):undefined;
-      const object=chosen&&chosen.state.kind!=='dropped_item'&&chosen.mesh.visible
+      const object=chosen&&chosen.mesh.visible&&wildlifeResourceSupportsAction(s.species,decision.action,chosen.state)
         ?chosen:this.findWildlifeResource(animal,decision.action);
       s.targetObjectId=object?.state.id;
       if(object)target=object.state.position;
@@ -2436,18 +2474,8 @@ class TownGame {
 
   findWildlifeResource(animal:WildlifeRuntime,action:WildlifeAction) {
     const candidates=[...this.objects.values()].filter(o=>o.state.kind!=='dropped_item'&&o.mesh.visible&&dist(animal.state.position,o.state.position)<=14);
-    const forageTags=wildlifeSpeciesProfile(animal.state.species).forageTags;
     const genome=normalizeWildlifeOrganismGenome(animal.state.species,animal.state.organismGenome,animal.state.id);
-    const wanted=(o:RuntimeObject)=>{
-      if(action==='drink')return o.state.tags.includes('water')||o.state.kind==='well';
-      if(action==='graze'||action==='forage'){
-        return o.state.tags.some(tag=>forageTags.includes(tag))
-          ||o.state.kind==='bush'||o.state.kind==='flower'
-          ||(o.state.kind==='tree'&&o.state.tags.includes('apple'));
-      }
-      return false;
-    };
-    const eligible=candidates.filter(wanted);
+    const eligible=candidates.filter(o=>wildlifeResourceSupportsAction(animal.state.species,action,o.state));
     if(action==='graze'||action==='forage'){
       return eligible.sort((a,b)=>{
         const aScore=wildlifeResourceNicheScore(animal.state.species,genome,a.state.tags,dist(animal.state.position,a.state.position));
@@ -2470,9 +2498,9 @@ class TownGame {
     const s=animal.state;
     const functional=wildlifeFunctionalPhenotype(normalizeWildlifePhenotype(s.phenotype,s.id));
     const object=s.targetObjectId?this.objects.get(s.targetObjectId):undefined;
-    // Sealed inventory parcels are not exposed plants or water. A stale provider
-    // target must not consume fractional parcel stock or grant a free need outcome.
-    if(object?.state.kind==='dropped_item'&&['drink','graze','forage'].includes(s.currentAction)){
+    if(['drink','graze','forage'].includes(s.currentAction)
+      &&((s.targetObjectId&&(!object||!wildlifeResourceSupportsAction(s.species,s.currentAction,object.state)))
+        ||(s.currentAction==='drink'&&!object))){
       s.targetObjectId=undefined;s.currentAction='rest';animal.actionResolved=true;return;
     }
     const random=beginRandomEvent(this.randomness,s,'wildlife-completion',s.currentAction,s.targetObjectId,s.targetWildlifeId,s.targetChunkId);
@@ -3274,7 +3302,12 @@ class TownGame {
     const isOvenWork=isBakingOven(obj.state)&&(task.action==='work'||task.action==='craft');
     if(isOvenWork){
       task.approach=bakingWorkApproach(agent.characterAsset,obj.state.position,obj.mesh.userData.ovenPhysics?.collider,
-        (point,radius)=>this.physics.isBlocked(point.x,point.z,radius));
+        (point,radius)=>this.physics.isBlocked(point.x,point.z,radius)||[...this.npcs.values()].some(other=>{
+          if(other===agent||other.removed)return false;
+          const occupied=dist(point,other.mesh.position)<radius+NPC_BODY_RADIUS;
+          const reserved=other.task?.approach;
+          return occupied||Boolean(reserved&&dist(point,reserved)<radius+NPC_BODY_RADIUS);
+        }));
       // No loaded/reachable facility stance means no work outcome, not crafting at
       // an arbitrary nearby point merely because pathfinding returned an empty path.
       if(!task.approach){agent.task=undefined;agent.path=[];agent.pathIndex=0;return;}
@@ -3605,7 +3638,7 @@ class TownGame {
   }
 
   openInteractionMenu(o:RuntimeObject,actions:InteractionCapability[]) {
-    this.resetGodCameraInput();
+    this.resetPlayerInput();this.resetGodCameraInput();
     this.interactionOpen=true;
     this.interactionObjectId=o.state.id;
     this.interactionWildlifeId=undefined;
@@ -3629,7 +3662,7 @@ class TownGame {
   }
 
   closeInteractionMenu(relock=false) {
-    this.resetGodCameraInput();
+    this.resetPlayerInput();this.resetGodCameraInput();
     ui.interaction.classList.add('hidden');
     this.interactionOpen=false;
     this.interactionObjectId=undefined;
@@ -3911,6 +3944,7 @@ class TownGame {
     ui.world.dataset.playerX=this.playerPosition.x.toFixed(4);
     ui.world.dataset.playerZ=this.playerPosition.z.toFixed(4);
     ui.world.dataset.playerInputSeconds=String(this.playerInputSeconds);
+    ui.world.dataset.simulationClock=JSON.stringify(this.simulationClock.diagnostics);
     ui.world.dataset.playerGroundingError=playerGroundingError.toFixed(5);
     ui.world.dataset.npcGroundingMaxError=npcGroundingMaxError.toFixed(5);
     ui.world.dataset.wildlifeGroundingMaxError=wildlifeGroundingMaxError.toFixed(5);
