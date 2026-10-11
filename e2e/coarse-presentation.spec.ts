@@ -1,4 +1,4 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './helpers/native-input-probe.js';
 import {setTimeout as wait} from 'node:timers/promises';
 import {gzipSync} from 'node:zlib';
 import { startFirstPerson } from './helpers/native-start.js';

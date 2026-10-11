@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 import ts from 'typescript';
+import {nativeInputClock} from './helpers/native-input-clock.js';
 import {FinePhysicsAuthority,type PhysicsPoint,type StaticCollider} from '../src/world/finePhysics.js';
 import {registerHomeTerrain} from '../src/world/fineTerrain.js';
 import {characterHeadEnvelope,playerHeadConstraint,playerHeadClearance,NPC_BODY_RADIUS} from '../src/world/characterContact.js';
@@ -19,7 +20,7 @@ const saved=JSON.parse(fs.readFileSync(new URL('./fixtures/native-waypoint-ci.js
 const actual:Fixture={...saved,name:'CI frozen actor poses'};
 const actor=(id:string,asset:string,x:number,z:number,headYaw:number):Actor=>({id,asset,position:{x,z},headYaw});
 
-async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;moveActor?:boolean;intrudeAt?:number;badActors?:boolean;badPosition?:boolean;coverGoalAt?:number;uncoverGoalAt?:number;badTrees?:boolean;badCounter?:'missing'|'NaN'|'rollback'|'frozen';simulationStart?:number;rafThrows?:boolean;lateFreeze?:boolean}={}){
+async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;moveActor?:boolean;intrudeAt?:number;badActors?:boolean;badPosition?:boolean;coverGoalAt?:number;uncoverGoalAt?:number;badTrees?:boolean;badCounter?:'missing'|'NaN'|'rollback'|'frozen';simulationStart?:number;rafThrows?:boolean;lateFreeze?:boolean;timerDelayMs?:number;noFrames?:boolean;frameIntervals?:number[]}={}){
   let p={...fixture.start},elapsed=0,frames=0,simulation=options.simulationStart??0;
   const actors=structuredClone(fixture.actors),held=new Set<string>(),events:Array<{type:string;code:string}>=[];
   const physics=new FinePhysicsAuthority();registerHomeTerrain(physics,72);
@@ -30,45 +31,37 @@ async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;
     if(key==='playerZ')return p.z.toFixed(4);
     if(key==='playerInputSeconds')return options.lateFreeze?String(Math.min(simulation,.1)):
       frames>0&&options.badCounter?({missing:'',NaN:'NaN',rollback:'-1',frozen:'0'}[options.badCounter]):String(simulation);
+    if(key==='simulationClock')return JSON.stringify(clock.clock.diagnostics);
     if(key==='treePresentation')return options.badTrees?'{invalid':JSON.stringify((fixture.diagnosticStatics??[]).map(collider=>({collider})));
     if(key==='characterSoles'&&options.badActors)return '{invalid';
     if(key==='characterSoles')return JSON.stringify(actors.map(a=>({...a,headEnvelope:characterHeadEnvelope(a.asset)})));
     return undefined;
   },set:()=>{throw new Error('diagnostic mutation is forbidden');}});
   const document={pointerLockElement:canvas as object|null,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}};
-  const timers=new Set<ReturnType<typeof setTimeout>>();
-  const context={document,performance:{now:()=>elapsed},setTimeout:(next:()=>void,ms:number)=>{
-    const timer=setTimeout(next,ms);timers.add(timer);return timer;
-  },clearTimeout:(timer:ReturnType<typeof setTimeout>)=>{clearTimeout(timer);timers.delete(timer);},cancelAnimationFrame:()=>{},KeyboardEvent:class{
-    type:string;code:string;constructor(type:string,options:{code:string}){this.type=type;this.code=options.code;}
-  },window:{dispatchEvent:(event:{type:string;code:string})=>{
-    assert.ok(['KeyW','KeyA','KeyS','KeyD','ShiftLeft'].includes(event.code));
-    events.push(event);if(event.type==='keydown')held.add(event.code);else held.delete(event.code);return true;
-  }},requestAnimationFrame:(next:()=>void)=>{
-    if(options.rafThrows)throw new Error('RAF registration failed');
-    elapsed+=frameMs;frames++;
+  let intrusionSteps=0;
+  const clock=nativeInputClock({frameMs,frameIntervals:options.frameIntervals,timerDelayMs:options.timerDelayMs,noFrames:options.noFrames,rafThrows:options.rafThrows,onFrame:()=>{
+    frames++;elapsed=frames*frameMs;
     if(options.moveActor&&frames===10)actors[0].position.z+=2;
-    if(options.intrudeAt===frames)actors[1].position.z=1.44;
+
     if(options.coverGoalAt===frames)actors[0].position.x=fixture.target.x;
     if(options.uncoverGoalAt===frames)actors[0].position.x=fixture.actors[0].position.x;
-    const x=Number(held.has('KeyD'))-Number(held.has('KeyA')),z=Number(held.has('KeyS'))-Number(held.has('KeyW')),length=Math.hypot(x,z);
-    if(length){
-      simulation+=Math.min(.05,frameMs/1000);
-      const distance=(held.has('ShiftLeft')?7.2:4.5)*Math.min(.05,frameMs/1000);
-      p=physics.moveKinematic({id:'player',position:p,radius:.30,displacement:{x:x/length*distance,z:z/length*distance},
-        dynamic:actors.map(a=>({id:a.id,...a.position,radius:NPC_BODY_RADIUS})),
-        constraints:actors.map(a=>playerHeadConstraint(a.id,a.asset,a.position,a.headYaw))}).position;
-    }
     if(options.loseLock)document.pointerLockElement=null;
-    Promise.resolve().then(next);return frames;
-  }};
+  },onStep:(dt,active)=>{
+    if(options.intrudeAt&&p.z>.2&&++intrusionSteps===options.intrudeAt-8)actors[1].position.z=1.44;
+    const x=Number(active.has('KeyD'))-Number(active.has('KeyA')),z=Number(active.has('KeyS'))-Number(active.has('KeyW')),length=Math.hypot(x,z);
+    simulation+=dt;
+    const distance=(active.has('ShiftLeft')?7.2:4.5)*dt;
+    p=physics.moveKinematic({id:'player',position:p,radius:.30,displacement:{x:x/length*distance,z:z/length*distance},
+      dynamic:actors.map(a=>({id:a.id,...a.position,radius:NPC_BODY_RADIUS})),
+      constraints:actors.map(a=>playerHeadConstraint(a.id,a.asset,a.position,a.headYaw))}).position;
+  }});
+  const context={...clock.context,document};
   const fn=vm.runInNewContext(callback,context) as (args:{target:PhysicsPoint;timeoutMs:number;tolerance:number;maxInputSeconds?:number})=>Promise<Result>;
   try{
     const result=await fn({target:fixture.target,timeoutMs:fixture.timeoutMs??45_000,tolerance:fixture.tolerance??.55,maxInputSeconds:fixture.maxInputSeconds});
-    return {result,frames,elapsed,events,simulation,finalClearances:actors.map(a=>playerHeadClearance(a.asset,a.position,a.headYaw,p))};
+    return {result,frames,elapsed:clock.time,events:clock.events,simulation,finalClearances:actors.map(a=>playerHeadClearance(a.asset,a.position,a.headYaw,p))};
   }finally{
-    assert.equal(held.size,0,'success, timeout and exceptions must release every key');
-    assert.equal(timers.size,0,'every completed frame must clear its watchdog');
+    clock.finish();
   }
 }
 
@@ -93,8 +86,11 @@ for(const fixture of fixtures)for(const frameMs of [16,100,500,1000])test(`${fix
 test('moving actor is still subject to unchanged production collision',async()=>{
   const {result}=await replay(fixtures[3],500,{moveActor:true});assert.equal(result.reached,true);
 });
-test('insufficient rendering budget remains a failure at the original deadline',async()=>{
-  const {result,elapsed}=await replay(actual,1500);assert.equal(result.reached,false);assert.equal(elapsed,45_000);
+test('1500 ms foreground intervals preserve the original route deadline',async()=>{
+  const {result,elapsed}=await replay(actual,1500);assert.equal(result.reached,true);assert.ok(elapsed<=45_000);
+});
+test('a frame beyond the original deadline cannot extend the route budget',async()=>{
+  const {result,elapsed}=await replay(actual,45_001);assert.equal(result.reached,false);assert.equal(elapsed,45_000);
 });
 test('unreachable target inside an actor remains a failure',async()=>{
   const {result}=await replay({...fixtures[3],target:{x:0,z:0}},500);assert.equal(result.reached,false);
@@ -131,7 +127,7 @@ for(const target of [{x:3.5,z:.16},{x:3.5,z:.167},{x:3.51,z:.16}])for(const fram
   const {result}=await replay({...fixtures[3],target,tolerance:.28},frameMs);
   assert.equal(result.reached,true,JSON.stringify(result));assert.ok(result.distance<=.28);
 });
-for(const intrudeAt of [9,10,11,12,13,14])for(const frameMs of [100,500])test(`moving NPC enters planned route at frame ${intrudeAt}, ${frameMs}ms`,async()=>{
+for(const intrudeAt of [9,10,11,12,13,14])for(const frameMs of [100,500])test(`moving NPC enters after ${intrudeAt-8} physical detour steps, ${frameMs}ms`,async()=>{
   const fixture={...fixtures[3],actors:[actor('one','female2',0,0,0),actor('two','male1',0,10,0)]};
   const {result}=await replay(fixture,frameMs,{intrudeAt});
   assert.equal(result.reached,true,JSON.stringify(result));assert.ok(result.detours>=2,'intrusion must actually trigger fresh planning');
@@ -153,9 +149,9 @@ test('recorded pre-detour checkpoint fits its original remaining time',async()=>
   const {result,elapsed}=await replay({...secondRecorded,timeoutMs:secondRecorded.checkpointRemainingMs},750);
   assert.equal(result.reached,true,JSON.stringify(result));assert.ok(elapsed<=secondRecorded.checkpointRemainingMs);assert.ok(result.distance<=.45);
 });
-test('insufficient late-checkpoint budget is still a failure',async()=>{
+test('full foreground time fits the original late-checkpoint budget',async()=>{
   const {result,elapsed}=await replay({...secondRecorded,timeoutMs:secondRecorded.checkpointRemainingMs},1000);
-  assert.equal(result.reached,false);assert.equal(elapsed,24_000);assert.ok(result.distance>.45);
+  assert.equal(result.reached,true);assert.ok(elapsed<=secondRecorded.checkpointRemainingMs);assert.ok(result.distance<=.45);
 });
 const partialGoals:Fixture[]=[
   {name:'east tolerance region',start:{x:-3,z:0},target:{x:1.6,z:.16},actors:[actor('one','female2',0,0,0)],tolerance:.28},
@@ -188,14 +184,14 @@ for(const frameMs of [800,1200,1400])test(`God-return overlap from CI exits thro
 const crossing:Fixture={name:'layout crossing',start:{x:0,z:0},target:{x:6,z:0},actors:[],tolerance:.3,timeoutMs:45_000,maxInputSeconds:2};
 test('layout input budget crosses six metres at one rendered frame per second',async()=>{
   const {result,elapsed,simulation}=await replay(crossing,1000,{simulationStart:9});
-  assert.equal(result.reached,true);assert.ok(result.distance<=.3);assert.equal(elapsed,19_000);assert.ok(simulation-9<2);
+  assert.equal(result.reached,true);assert.ok(result.distance<=.3);assert.equal(elapsed,4_000);assert.ok(simulation-9<2);
   assert.equal(result.elapsedMs,elapsed);assert.equal(result.inputSeconds,simulation-9);assert.equal(result.stopReason,'reached');
   const original=await replay({...crossing,timeoutMs:10_000,maxInputSeconds:undefined},1000);
-  assert.equal(original.result.reached,false);assert.equal(original.elapsed,10_000);assert.ok(Math.abs(original.simulation-.5)<1e-9);
+  assert.equal(original.result.reached,true);assert.equal(original.elapsed,4_000);assert.ok(original.result.distance<=.3);assert.ok(Math.abs(original.simulation-simulation+9)<1e-8);
 });
 test('input budget ends an unreached route after two attempted seconds',async()=>{
   const {result,simulation,elapsed}=await replay({...crossing,target:{x:100,z:0}},50);
-  assert.equal(result.reached,false);assert.ok(Math.abs(simulation-2)<1e-9);assert.equal(elapsed,2000);
+  assert.equal(result.reached,false);assert.ok(Math.abs(simulation-2)<1e-9);assert.equal(elapsed,2350);
   assert.equal(result.stopReason,'input-budget');
 });
 test('unchanged collision consumes the same input budget with zero displacement',async()=>{
@@ -205,12 +201,12 @@ test('unchanged collision consumes the same input budget with zero displacement'
   assert.equal(result.reached,false);assert.equal(result.x,0);assert.equal(result.z,0);assert.ok(Math.abs(simulation-2)<1e-9);
 });
 test('arrival observed after the input budget cannot pass',async()=>{
-  const {result,simulation}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,maxInputSeconds:.04},50);
+  const {result,simulation}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,maxInputSeconds:.04},50,{timerDelayMs:10});
   assert.ok(result.distance<=.001);assert.equal(simulation,.05);assert.equal(result.reached,false);
 });
 test('arrival observed after the wall deadline cannot pass',async()=>{
   const {result,elapsed}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,timeoutMs:45_000},45_001);
-  assert.ok(result.distance<=.001);assert.equal(elapsed,45_001);assert.equal(result.reached,false);
+  assert.equal(result.x,0);assert.equal(elapsed,45_000);assert.equal(result.reached,false);
 });
 test('arrival exactly at both budgets is permitted',async()=>{
   const {result}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,maxInputSeconds:.05,timeoutMs:50},50);
@@ -236,20 +232,37 @@ for(const maxInputSeconds of [0,-1,NaN,Infinity])test(`input budget rejects inva
 });
 test('wall watchdog releases keys without RAF and late callbacks cannot issue input',async()=>{
   let elapsed=0,nextId=10;const held=new Set<string>(),events:string[]=[],timers=new Map<number,()=>void>(),frames=new Map<number,()=>void>(),cancelled:number[]=[];
-  const canvas={},dataset={playerX:'0',playerZ:'0',playerInputSeconds:'3',characterSoles:'[]',treePresentation:'[]'};
+  const canvas={},dataset={playerX:'0',playerZ:'0',playerInputSeconds:'3',characterSoles:'[]',treePresentation:'[]',simulationClock:'{"pendingSeconds":0}'};
   const document={pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}};
   const context={document,performance:{now:()=>elapsed},KeyboardEvent:class{
     type:string;code:string;constructor(type:string,options:{code:string}){this.type=type;this.code=options.code;}
   },window:{dispatchEvent:(event:{type:string;code:string})=>{
     events.push(event.type+':'+event.code);if(event.type==='keydown')held.add(event.code);else held.delete(event.code);return true;
-  }},setTimeout:(next:()=>void,ms:number)=>{assert.equal(ms,45_000);const id=++nextId;timers.set(id,next);return id;},
+  }},setTimeout:(next:()=>void,ms:number)=>{assert.ok(ms>0&&ms<=45_000);const id=++nextId;timers.set(id,next);return id;},
   clearTimeout:(id:number)=>{timers.delete(id);},requestAnimationFrame:(next:()=>void)=>{const id=++nextId;frames.set(id,next);return id;},
   cancelAnimationFrame:(id:number)=>{cancelled.push(id);frames.delete(id);}};
   const fn=vm.runInNewContext(callback,context) as (args:object)=>Promise<Result>;
   const pending=fn({target:crossing.target,timeoutMs:45_000,tolerance:.3,maxInputSeconds:2});
-  assert.ok(held.size>0);assert.equal(frames.size,1);const [frameId,lateFrame]=[...frames][0];
+  assert.ok(held.size>0);assert.equal(frames.size,0);
+  elapsed=250;const [pulseId,pulse]=[...timers][0];timers.delete(pulseId);pulse();await Promise.resolve();
+  assert.equal(held.size,0);assert.equal(frames.size,1);const [frameId,lateFrame]=[...frames][0];
   elapsed=45_000;[...timers.values()][0]();
   const result=await pending;assert.equal(result.reached,false);assert.equal(held.size,0);assert.deepEqual(cancelled,[frameId]);assert.equal(timers.size,0);
   assert.equal(result.elapsedMs,45_000);assert.equal(result.inputSeconds,0);assert.equal(result.stopReason,'wall-budget');
   const finishedEvents=[...events];lateFrame();await Promise.resolve();assert.deepEqual(events,finishedEvents);assert.equal(held.size,0);
+});
+
+
+test('a five-second foreground gap drains before the next finite input pulse',async()=>{
+  const {result,events,simulation,elapsed}=await replay(crossing,1000,{frameIntervals:[5000,100,100]});
+  assert.equal(result.reached,true);assert.ok(result.distance<=.3);assert.ok(simulation<=2);assert.ok(elapsed<=45000);
+  const presses=events.filter(e=>e.type==='keydown'&&e.code==='KeyD');
+  assert.ok(presses.length>1);assert.equal(presses[1].at,5200);
+  assert.equal(events.find(e=>e.type==='keyup'&&e.code==='KeyD')?.at,250);
+});
+
+test('an arrived position with unconsumed debt cannot pass at the deadline',async()=>{
+  const {result,elapsed}=await replay({...crossing,target:{x:1.125,z:0},tolerance:.001,timeoutMs:2500},2500);
+  assert.equal(result.reached,false);assert.ok(result.distance<=.001);assert.equal(elapsed,2500);
+  assert.equal((result as Result&{clock:{pendingSeconds:number}}).clock.pendingSeconds,.5);
 });

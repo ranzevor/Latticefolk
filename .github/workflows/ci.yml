@@ -45,6 +45,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Playable browser smoke
         run: node scripts/run-e2e-group.mjs ${{ matrix.group }}
+        env:
+          LATTICEFOLK_NATIVE_INPUT_PROBE: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 107 && '1' || '0' }}
       - name: Upload playable evidence
         if: always()
         uses: actions/upload-artifact@v4

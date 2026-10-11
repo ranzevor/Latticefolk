@@ -10,7 +10,7 @@ const ast=ts.createSourceFile('main.ts',main,ts.ScriptTarget.Latest,true);
 let update:ts.MethodDeclaration|undefined;
 const visit=(node:ts.Node)=>{if(ts.isMethodDeclaration(node)&&node.name.getText(ast)==='updatePlayer')update=node;ts.forEachChild(node,visit);};visit(ast);
 assert.ok(update?.body);
-const source=ts.transpileModule(`function updatePlayer(dt:number) ${update.body.getText(ast)}\nupdatePlayer;`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const source=ts.transpileModule(`function ${update.getText(ast)}\nupdatePlayer;`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
 const run=vm.runInNewContext(source,{THREE}) as (this:ReturnType<typeof state>,dt:number)=>void;
 function state(){
  const calls:number[]=[];const camera=new THREE.PerspectiveCamera();camera.position.set(0,1.7,0);
@@ -37,5 +37,6 @@ test('movable push retry does not count the same dt twice',()=>{
 test('observation is exposed through existing read-only diagnostics',()=>{
  assert.equal((main.match(/playerInputSeconds/g)??[]).length,4);
  assert.match(main,/ui\.world\.dataset\.playerInputSeconds=String\(this\.playerInputSeconds\);/);
- assert.match(main,/if\(this\.cameraMode==='firstPerson'\)\{this\.updatePlayer\(dt\);/);
+ assert.ok(main.includes('this.simulationClock.advance(now(),(dt,input)=>this.simulateStep(dt,input))'));
+ assert.ok(main.includes('this.updatePlayer(dt,input??'));
 });

@@ -1,5 +1,5 @@
 
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext } from './helpers/native-input-probe.js';
 import * as THREE from 'three';
 import { CoarseWorldRuntime } from '../src/world/coarseWorld.js';
 import { planFineChunk } from '../src/world/materialization.js';
