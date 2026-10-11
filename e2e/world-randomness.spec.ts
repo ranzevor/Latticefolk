@@ -130,3 +130,22 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     await info.attach('late-wildlife-state',{body:Buffer.from(JSON.stringify({revision:saved.revision,state:current})),contentType:'application/json'});
   }finally{release();}
 });
+
+
+test('restored patrol completes once and a second reload does not repeat its reward',async({page,request},info)=>{
+  test.setTimeout(110_000);
+  const seed=snapshot('e2e-accepted-patrol');
+  seed.homeNpcs=[{id:'yui',name:'Yui',role:'maker',position:{x:-18,z:6},home:{x:-21,z:12},mood:'calm',hunger:20,energy:80,social:50,money:123,
+    inventory:[],relationships:{},memories:[],currentAction:'patrol',goal:'live',lastDecisionAt:0,randomEventCursor:23,
+    continuation:{version:1,path:[],nextDecisionInMs:120_000,task:{action:'patrol',elapsedMs:5000}}}];
+  await seedWorld(request,seed);
+  await page.route('**/api/decision',route=>route.fulfill({json:idle}));
+  await page.goto('/',{waitUntil:'domcontentloaded'});await startFirstPerson(page);
+  const first=await autosave(page,request),actor=first.stored.homeNpcs.find(n=>n.id==='yui')!;
+  expect(actor.money).toBe(124);expect(actor.randomEventCursor).toBe(23);expect(actor.continuation).toBeDefined();
+  expect(actor.continuation!.task).toBeUndefined();expect(actor.continuation!.path).toEqual([]);
+  await page.reload();await startFirstPerson(page);
+  const second=await autosave(page,request),again=second.stored.homeNpcs.find(n=>n.id==='yui')!;
+  expect(again.money).toBe(124);expect(again.randomEventCursor).toBe(23);expect(again.continuation!.task).toBeUndefined();
+  await info.attach('restored-patrol-checkpoints',{body:Buffer.from(JSON.stringify({first:{revision:first.revision,actor},second:{revision:second.revision,actor:again}})),contentType:'application/json'});
+});

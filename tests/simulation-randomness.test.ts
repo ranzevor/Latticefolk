@@ -329,6 +329,10 @@ test('accepted NPC task and remaining path survive a checkpoint at a different r
   assert.deepEqual(again.task,{action:'patrol',startedAt:89400});
   assert.equal(again.nextDecisionAt-restored.io.clock,actor.nextDecisionAt-live.io.clock);
   assert.equal(again.state.randomEventCursor,23);
+  const money=actor.state.money;
+  live.runtime.completeTask(actor);restored.runtime.completeTask(again);
+  assert.equal(actor.state.money,money+1);assert.deepEqual(stableState(again.state),stableState(actor.state));
+  restored.runtime.completeTask(again);assert.equal(again.state.money,money+1);
 });
 
 test('fine NPC collapse preserves the accepted task without redrawing its event cursor',()=>{
