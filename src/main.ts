@@ -1,3 +1,4 @@
+import {prepareVisualPrograms} from './scene/visualPrograms';
 import './style.css';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -806,6 +807,7 @@ class TownGame {
       }
     }));
     this.assetLoadFailures=loaded.flatMap((result,index)=>result.status==='rejected'?[assetEntries[index]![0]]:[]);
+    await prepareVisualPrograms(this.renderer,this.camera,this.scene,[...this.assets.values()].map(asset=>asset.scene));
     for(const target of this.visualTargets)this.applyVisualTarget(target);
     this.assetsReady=this.assetLoadFailures.length===0;
     this.log(`视觉素材：Quaternius 已加载 ${assetEntries.length-this.assetLoadFailures.length}/${assetEntries.length}（Cube World + Ultimate Fantasy RTS + Medieval Village）`,'developer');

@@ -1,3 +1,4 @@
+import {prepareVisualPrograms} from '../src/scene/visualPrograms.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,10 +17,10 @@ const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
 const game=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='TownGame') as ts.ClassDeclaration;
 const method=(name:string)=>game.members.find(n=>n.name?.getText(ast)===name)!.getText(ast);
-const Runtime=new Function('THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows',
+const Runtime=new Function('prepareVisualPrograms','THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows',
   'WATER_PATCH_ASSET','BAKING_OVEN_ASSET',ts.transpileModule(`return class Runtime {objects=new Map();${[
     'streamedPresentation','loadVisualAssets','normalizeModel','pickEntity','applyVisualTarget','attachVisualTarget'].map(method).join('\n')}}`,
-  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,'waterPatch','bakingOven');
+  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(prepareVisualPrograms,THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,'waterPatch','bakingOven');
 
 function triangles(geometry:THREE.BufferGeometry){
   const rows:string[]=[];
@@ -93,7 +94,7 @@ test('unsupported material, animation and geometry inputs remain unmodified',()=
 
 test('real asset loading groups the well before attaching any visual clone',async()=>{
   const scene=well(),seen:number[]=[];
-  const runtime=Object.assign(new Runtime(),{assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[{asset:'wellAsset'}],
+  const runtime=Object.assign(new Runtime(),{renderer:{compileAsync:async(scene:THREE.Object3D)=>scene},camera:new THREE.PerspectiveCamera(),scene:new THREE.Scene(),assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[{asset:'wellAsset'}],
     fbxLoader:{loadAsync:async()=>scene},gltfLoader:{loadAsync:async()=>({scene:new THREE.Group(),animations:[]})},
     applyVisualTarget(){seen.push(mesh(this.assets.get('wellAsset').scene).geometry.groups.length);},log(){}});
   await runtime.loadVisualAssets();assert.deepEqual(runtime.assetLoadFailures,[]);assert.deepEqual(seen,[5]);assert.equal(runtime.assetsReady,true);

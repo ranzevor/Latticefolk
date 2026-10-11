@@ -1,4 +1,4 @@
-import {test,expect,type APIRequestContext,type Page} from '@playwright/test';
+import {test,expect,type APIRequestContext,type Page,type Request,type Route} from '@playwright/test';
 import type {WorldPersistenceSnapshot} from '../src/types.js';
 import {startFirstPerson} from './helpers/native-start.js';
 
@@ -14,11 +14,26 @@ function expectSettledRain(saved:SavedWorld){
   expect(saved.snapshot.meta.minuteOfDay).toBeGreaterThanOrEqual(720);
   expect(saved.snapshot.meta.minuteOfDay).toBeLessThan(1080);
 }
-async function nextBrowserAutosave(page:Page,request:APIRequestContext){
-  // Observe a request issued after this checkpoint, rather than a possibly late
-  // response or an old document's unload beacon (whose resource type is ping).
-  const outgoing=await page.waitForRequest(candidate=>candidate.url()===new URL('/api/world/state',page.url()).href
-    &&candidate.method()==='POST'&&candidate.resourceType()==='fetch'&&candidate.frame()===page.mainFrame(),{timeout:45_000});
+async function nextBrowserAutosave(page:Page,request:APIRequestContext,start:()=>Promise<void>){
+  const url=new URL('/api/world/state',page.url()).href;
+  let selected:Request|undefined,release!:()=>void,resolveRequest!:(value:Request)=>void;
+  let rejectRequest!:(error:Error)=>void;
+  const checkpoint=new Promise<void>(resolve=>{release=resolve;});
+  const captured=new Promise<Request>((resolve,reject)=>{resolveRequest=resolve;rejectRequest=reject;});
+  const route=async(intercepted:Route)=>{
+    const candidate=intercepted.request();
+    if(candidate.method()==='POST'&&candidate.resourceType()==='fetch'&&candidate.frame()===page.mainFrame()){
+      if(!selected){selected=candidate;resolveRequest(candidate);}
+      else await checkpoint;
+    }
+    await intercepted.continue();
+  };
+  await page.route(url,route);
+  const timer=setTimeout(()=>rejectRequest(new Error('No browser autosave issued at checkpoint')),45_000);
+  try{
+    const [saved]=await Promise.all([(async()=>{
+      const outgoing=await captured;
+      clearTimeout(timer);
   const submitted=outgoing.postDataJSON() as {expectedRevision:number;snapshot:WorldPersistenceSnapshot};
   expect(Number.isSafeInteger(submitted.expectedRevision)).toBe(true);
   expectSettledRain({revision:submitted.expectedRevision,snapshot:submitted.snapshot});
@@ -31,6 +46,11 @@ async function nextBrowserAutosave(page:Page,request:APIRequestContext){
   const stored=await savedWorld(request);expectSettledRain(stored);
   expect(stored.revision).toBeGreaterThanOrEqual(acknowledged.revision);
   return {revision:acknowledged.revision,snapshot:submitted.snapshot,storedRevision:stored.revision};
+    })(),start()]);
+    return saved;
+  }finally{
+    clearTimeout(timer);release();await page.unroute(url,route);
+  }
 }
 
 // The existing isolated E2E SQLite world is shared by one worker. Close before
@@ -60,12 +80,9 @@ test('settled saved weather and its processed phase survive real page reload and
   await expect(status).toHaveAttribute('data-persistence-conflict','false');
   // Require an ordinary acknowledged client autosave, rather than rereading
   // the initial fixture. The original client drops weatherEpoch from this save.
-  // Arm the actual request observer before native startup, and check its ACK
-  // while startup runs so a later autosave cannot overtake the exact revision check.
-  const [beforeReload]=await Promise.all([
-    nextBrowserAutosave(page,request),
-    (async()=>{await startFirstPerson(page);await expect(clock).toContainText(/ · Rain$/);})()
-  ]);expect(beforeReload.revision).toBeGreaterThan(seedRevision);
+  const beforeReload=await nextBrowserAutosave(page,request,async()=>{
+    await startFirstPerson(page);await expect(clock).toContainText(/ · Rain$/);
+  });expect(beforeReload.revision).toBeGreaterThan(seedRevision);
   await expect(clock).toContainText(/ · Rain$/);
 
   const restoredResponse=page.waitForResponse(response=>response.url().endsWith('/api/world/state')&&response.request().method()==='GET'&&response.ok());
@@ -75,10 +92,9 @@ test('settled saved weather and its processed phase survive real page reload and
   await expect(status).toHaveAttribute('data-persistence-conflict','false');
   // The reload and its state GET have finished before this observer is armed.
   // Frame identity alone is not a document boundary because the main frame is reused.
-  const [afterReload]=await Promise.all([
-    nextBrowserAutosave(page,request),
-    (async()=>{await startFirstPerson(page);await expect(clock).toContainText(/ · Rain$/);})()
-  ]);expect(afterReload.revision).toBeGreaterThan(restored.revision);
+  const afterReload=await nextBrowserAutosave(page,request,async()=>{
+    await startFirstPerson(page);await expect(clock).toContainText(/ · Rain$/);
+  });expect(afterReload.revision).toBeGreaterThan(restored.revision);
   expect(afterReload.snapshot.meta.minuteOfDay).toBeGreaterThanOrEqual(restored.snapshot.meta.minuteOfDay);
   await expect(clock).toContainText(/ · Rain$/);
   await expect(status).toHaveAttribute('data-persistence-conflict','false');
