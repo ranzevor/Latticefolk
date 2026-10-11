@@ -17,7 +17,7 @@ async function fixture(){
   const w=new JSDOM('<html><body><div id="app"></div></body></html>',{url:'https://latticefolk.test',pretendToBeVisual:true}).window;
   const document=w.document as Document;
   let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0;
-  const scheduled:Array<()=>void>=[],steps:number[]=[],coarseSteps:number[]=[],npcSteps:number[]=[],wildlifeSteps:number[]=[];
+  const scheduled:Array<(frameAt?:number)=>void>=[],steps:number[]=[],coarseSteps:number[]=[],npcSteps:number[]=[],wildlifeSteps:number[]=[];
   Object.defineProperties(document,{hidden:{get:()=>hidden},hasFocus:{value:()=>focused},pointerLockElement:{get:()=>lockElement},
     exitPointerLock:{value:()=>{lockElement=null;document.dispatchEvent(new w.Event('pointerlockchange'));}}});
   class Renderer {
@@ -40,13 +40,24 @@ async function fixture(){
   document.querySelector<HTMLButtonElement>('#startBtn')!.click();
   const errors:unknown[]=[];w.addEventListener('error',(e:ErrorEvent)=>{errors.push(e.error);e.preventDefault();});
   const key=(type:string,code:string,repeat=false,target:EventTarget=w)=>target.dispatchEvent(new w.KeyboardEvent(type,{code,repeat,bubbles:true}));
-  const frame=(at:number)=>{time=at;const callback=scheduled.shift();assert.ok(callback);callback();assert.deepEqual(errors,[]);};
+  const frame=(at:number,frameAt?:number)=>{time=at;const callback=scheduled.shift();assert.ok(callback);callback(frameAt);assert.deepEqual(errors,[]);};
   const look=(movementX:number)=>{const e=new w.MouseEvent('mousemove',{bubbles:true});Object.defineProperties(e,{movementX:{value:movementX},movementY:{value:0}});document.dispatchEvent(e);};
   return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},renders:()=>renderCalls,
     focus:(value:boolean)=>{focused=value;w.dispatchEvent(new w.Event(value?'focus':'blur'));},
     visible:(value:boolean)=>{hidden=!value;document.dispatchEvent(new w.Event('visibilitychange'));},
     close:()=>{game.controls.dispose();game.orbit.dispose();w.close();}};
 }
+
+test('real animate preserves a delayed native pulse across a captured rendering boundary',async()=>{
+  const f=await fixture();try{
+    f.frame(1017.7,571.6);
+    f.at(2134.8);f.game.playerMovementKey('KeyD',true,false,595.5);
+    f.at(2135.1);f.game.playerMovementKey('KeyD',false,false,845.4);
+    f.frame(2303.7,1821.4);
+    near(f.game.playerInputSeconds,.2499);near(f.game.playerPosition.x,.2499*4.5);
+    near(f.steps.reduce((a,b)=>a+b,0),1.8214);assert.equal(f.game.simulationClock.diagnostics.resetReason,'none');
+  }finally{f.close();}
+});
 
 test('real TownGame at 1 FPS matches 20 FPS displacement and all simulation consumers',async()=>{
   const slow=await fixture(),normal=await fixture();try{

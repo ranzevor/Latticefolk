@@ -17,12 +17,13 @@ type ResetReason='none'|'suspended'|'invalid-time'|'input-overflow';
 export class SimulationClock {
   private sampledAt?:number;
   private lastFrameAt?:number;
+  private lastAnimationAt?:number;
   private input?:PlayerMovementInput;
   private changes:InputChange[]=[];
   readonly diagnostics={elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,inputOverflowCount:0,resetReason:'none' as ResetReason};
 
   reset(reason:ResetReason='suspended') {
-    this.sampledAt=undefined;this.lastFrameAt=undefined;
+    this.sampledAt=undefined;this.lastFrameAt=undefined;this.lastAnimationAt=undefined;
     this.clearInput();
     Object.assign(this.diagnostics,{elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,resetReason:reason});
   }
@@ -56,7 +57,20 @@ export class SimulationClock {
   }
 
   advance(at:number,step:(seconds:number,input:PlayerMovementInput|undefined)=>void):boolean {
-    if(!Number.isFinite(at)||at<0||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(this.changes.at(-1)?.at??0)>at){
+    return this.advanceTo(at,at,step);
+  }
+
+  advanceFrame(frameAt:number|undefined,handledAt:number,step:(seconds:number,input:PlayerMovementInput|undefined)=>void):boolean {
+    const at=frameAt===undefined?handledAt:frameAt;
+    if(!Number.isFinite(at)||at<0||!Number.isFinite(handledAt)||at>handledAt||(frameAt!==undefined&&this.lastAnimationAt!==undefined&&frameAt<this.lastAnimationAt)){
+      this.reset('invalid-time');return false;
+    }
+    if(frameAt!==undefined)this.lastAnimationAt=frameAt;
+    return this.advanceTo(Math.max(at,this.lastFrameAt??at),handledAt,step);
+  }
+
+  private advanceTo(at:number,handledAt:number,step:(seconds:number,input:PlayerMovementInput|undefined)=>void):boolean {
+    if(!Number.isFinite(at)||at<0||!Number.isFinite(handledAt)||at>handledAt||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(this.changes.at(-1)?.at??0)>handledAt){
       this.reset('invalid-time');return false;
     }
     if(this.sampledAt===undefined){this.sampledAt=at;this.lastFrameAt=at;return true;}
