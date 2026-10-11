@@ -26,7 +26,7 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
   });
   await page.exposeBinding('__latticeNativeProbeRecord',(_source,value:unknown)=>{report.routes.push(value);});
   await page.addInitScript(()=>{
-    type State={x:number;z:number;inputSeconds:number;clock:unknown;focused:boolean;hidden:boolean};
+    type State={x:number;z:number;inputSeconds:number;clock:unknown;focused:boolean;hidden:boolean;nearbyActors?:unknown[]};
     type KeySample={type:string;code:string;eventAt:number;handledAt:number;trusted:boolean;state:State};
     type FrameSample={callbackAt:number;rafTimestamp:number;state:State};
     const root=window as unknown as {
@@ -40,6 +40,13 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
     const read=():State=>{
       const d=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
       return {x:Number(d?.playerX),z:Number(d?.playerZ),inputSeconds:Number(d?.playerInputSeconds),clock:JSON.parse(d?.simulationClock??'null'),focused:document.hasFocus(),hidden:document.hidden};
+    };
+    const boundaryState=():State=>{
+      const state=read(),d=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
+      const actors=JSON.parse(d?.characterSoles??'[]') as Array<{id?:string;position:{x:number;z:number};headYaw:number;headEnvelope:unknown}>;
+      state.nearbyActors=actors.filter(actor=>Math.hypot(actor.position.x-state.x,actor.position.z-state.z)<=4).slice(0,12)
+        .map(actor=>({id:actor.id,position:actor.position,headYaw:actor.headYaw,headEnvelope:actor.headEnvelope}));
+      return state;
     };
     const sample=(rafTimestamp:number)=>{
       if(!active)return;
@@ -56,7 +63,7 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
     addEventListener('keydown',key);addEventListener('keyup',key);
     root.nativeInputProbe={
       start:(options:unknown)=>{
-        routeId=`${performance.timeOrigin}:${++sequence}`;route=options;startedAt=performance.now();startState=read();
+        routeId=`${performance.timeOrigin}:${++sequence}`;route=options;startedAt=performance.now();startState=boundaryState();
         keys=[];frames=[];held.clear();truncatedKeys=0;truncatedFrames=0;active=true;frame=requestAnimationFrame(sample);
       },
       pulse:(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>root.__latticeNativePulse({
@@ -65,16 +72,26 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
       finish:async()=>{
         active=false;cancelAnimationFrame(frame);
         await root.__latticeNativeProbeRecord({routeId,route,browserTimeOrigin:performance.timeOrigin,startedAt,startState,
-          finishedAt:performance.now(),keys,frames,truncatedKeys,truncatedFrames,held:[...held],final:read()});
+          finishedAt:performance.now(),keys,frames,truncatedKeys,truncatedFrames,held:[...held],final:boundaryState()});
         if(keys.some(event=>!event.trusted)||held.size)throw new Error('Native probe observed untrusted input or an unreleased key');
       }
     };
   });
   try{await use();}finally{
     if(!page.isClosed())await session.detach().catch(error=>{report.errors.push(String(error));});
+    const routes=report.routes.slice(-4).map(value=>{
+      const route=value as {routeId:string;route:unknown;startedAt:number;finishedAt:number;startState:unknown;final:unknown;
+        keys:unknown[];frames:unknown[];truncatedKeys:number;truncatedFrames:number;held:string[]};
+      return {...route,keys:route.keys.slice(-16),frames:route.frames.slice(-16),
+        omittedKeys:Math.max(0,route.keys.length-16),omittedFrames:Math.max(0,route.frames.length-16)};
+    });
+    const summary=JSON.stringify({test:report.test,routes,pulses:report.pulses.slice(-12),errors:report.errors.slice(-8)});
+    if(Buffer.byteLength(summary)<=64*1024)console.info('native-input-summary',summary);
+    else console.info('native-input-summary',JSON.stringify({test:report.test,summaryOmitted:true,bytes:Buffer.byteLength(summary)}));
     await info.attach('independent-native-input-probe',{body:Buffer.from(JSON.stringify(report,null,2)),contentType:'application/json'});
   }
 },{auto:true}]});
 
 export {expect};
 export type {Page,TestInfo,APIRequestContext};
+
