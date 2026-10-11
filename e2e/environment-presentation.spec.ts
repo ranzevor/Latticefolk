@@ -4,6 +4,7 @@ import type { StaticCollider,PhysicsTrigger } from '../src/world/finePhysics.js'
 import { startFirstPerson } from './helpers/native-start.js';
 import { lookForObject } from './helpers/relative-look.js';
 import { waitForPlayerZBelow } from './helpers/frame-position.js';
+import { observeReleasedPlayerFrame } from './helpers/released-player-frame.js';
 
 interface TreeView {id:string;height:number;position:{x:number;z:number};collider:StaticCollider;trigger:PhysicsTrigger;}
 interface SoleView {id:string;animation:string;vertices:number;ground:number;sole:number;position:{x:number;z:number};}
@@ -178,6 +179,8 @@ test('native approach respects source head clearance while dialogue and observer
     await waitForPlayerZBelow(page,actor.position.z+separation+.25,20_000);
     await page.waitForTimeout(500);
   }finally{await page.keyboard.up('KeyW');}
+  const releasedFrame=await page.evaluate(observeReleasedPlayerFrame,20_000);
+  await info.attach('npc-released-input-frame',{body:Buffer.from(JSON.stringify(releasedFrame)),contentType:'application/json'});
   const contacted=await readView(),contact=contacted.player;
   expect(contact.x).toBeCloseTo(-9,3);
   expect(contact.z-actor.position.z).toBeGreaterThanOrEqual(separation-.0001);

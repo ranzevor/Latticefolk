@@ -1,4 +1,4 @@
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext } from './helpers/native-input-probe.js';
 import type { CoarseChunkState, DecisionResponse, NpcState, WorldObjectState, WorldPersistenceSnapshot } from '../src/types.js';
 import { fineParcelFixture } from './helpers/parcel-fixture.js';
 import { ensureWildlifePopulations } from '../src/world/ecology.js';
