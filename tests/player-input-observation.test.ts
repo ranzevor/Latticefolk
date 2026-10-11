@@ -37,6 +37,6 @@ test('movable push retry does not count the same dt twice',()=>{
 test('observation is exposed through existing read-only diagnostics',()=>{
  assert.equal((main.match(/playerInputSeconds/g)??[]).length,4);
  assert.match(main,/ui\.world\.dataset\.playerInputSeconds=String\(this\.playerInputSeconds\);/);
- assert.ok(main.includes('this.simulationClock.advance(now(),(dt,input)=>this.simulateStep(dt,input))'));
+ assert.ok(main.includes('this.simulationClock.advanceFrame(frameAt,now(),(dt,input)=>this.simulateStep(dt,input))'));
  assert.ok(main.includes('this.updatePlayer(dt,input??'));
 });
