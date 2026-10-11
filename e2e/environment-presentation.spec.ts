@@ -123,6 +123,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   for(const actor of decisionPaused){expect(actor.vertices).toBeGreaterThan(0);expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);}
   await page.keyboard.press('Tab');await page.locator('#pauseBtn').press('Enter');await page.keyboard.press('Tab');
   await expect.poll(async()=>(await soles(page)).some(a=>a.animation==='Walk'||a.animation==='Run'),{timeout:30_000}).toBe(true);
+  const movingFraming=await frameActor();
+  const movingContext=await page.screenshot();
   const frames=await page.evaluate(async()=>{
     const samples:unknown[]=[];
     for(let frame=0;frame<48;frame++){
@@ -133,9 +135,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   });
   expect(frames.flat().some(a=>a.animation==='Walk'||a.animation==='Run')).toBe(true);
   for(const actor of frames.flat())expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);
-  const movingFraming=await frameActor();
   await info.attach('npc-current-skin-support-samples',{body:Buffer.from(JSON.stringify({decisionPaused,frames,pausedFraming,movingFraming},null,2)),contentType:'application/json'});
-  await info.attach('npc-moving-pose-context',{body:await page.screenshot(),contentType:'image/png'});
+  await info.attach('npc-moving-pose-context',{body:movingContext,contentType:'image/png'});
 });
 
 test('native approach respects source head clearance while dialogue and observer shadows remain usable',async({page,request},info)=>{
