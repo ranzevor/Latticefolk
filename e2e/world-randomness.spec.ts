@@ -120,7 +120,10 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     finally{handled();}
   });
   try{
-    await page.goto('/',{waitUntil:'domcontentloaded'});await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await page.goto('/',{waitUntil:'domcontentloaded'});
+    await expect(status(page)).toHaveAttribute('data-assets-ready','true',{timeout:20_000});
+    await expect(status(page)).toHaveAttribute('data-asset-failures','0');
+    await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
     await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);
     await nativeCrossing(page,35.2,x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
     await nativeCrossing(page,37.2,x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
