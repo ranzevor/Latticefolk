@@ -16,8 +16,8 @@ const near=(actual:number,expected:number)=>assert.ok(Math.abs(actual-expected)<
 async function fixture(){
   const w=new JSDOM('<html><body><div id="app"></div></body></html>',{url:'https://latticefolk.test',pretendToBeVisual:true}).window;
   const document=w.document as Document;
-  Object.defineProperty(w.navigator,'scheduling',{value:{isInputPending:()=>inputPending},configurable:true});
-  let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0,inputPending=false;
+  Object.defineProperty(w.navigator,'scheduling',{value:{isInputPending:(options:{includeContinuous:boolean})=>inputPending||(options.includeContinuous&&continuousPending)},configurable:true});
+  let time=0,focused=true,hidden=false,lockElement:Element|null=null,renderCalls=0,inputPending=false,continuousPending=false;
   const tasks:Array<()=>void>=[];
   const scheduled:Array<(frameAt?:number)=>void>=[],steps:number[]=[],coarseSteps:number[]=[],npcSteps:number[]=[],wildlifeSteps:number[]=[];
   Object.defineProperties(document,{hidden:{get:()=>hidden},hasFocus:{value:()=>focused},pointerLockElement:{get:()=>lockElement},
@@ -44,7 +44,7 @@ async function fixture(){
   const key=(type:string,code:string,repeat=false,target:EventTarget=w)=>target.dispatchEvent(new w.KeyboardEvent(type,{code,repeat,bubbles:true}));
   const frame=(at:number,frameAt?:number)=>{time=at;const callback=scheduled.shift();assert.ok(callback);callback(frameAt);assert.deepEqual(errors,[]);};
   const look=(movementX:number)=>{const e=new w.MouseEvent('mousemove',{bubbles:true});Object.defineProperties(e,{movementX:{value:movementX},movementY:{value:0}});document.dispatchEvent(e);};
-  return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},renders:()=>renderCalls,
+  return{game,ui,w,document,steps,coarseSteps,npcSteps,wildlifeSteps,errors,key,frame,look,at:(at:number)=>{time=at;},pending:(value:boolean)=>{inputPending=value;},continuous:(value:boolean)=>{continuousPending=value;},renders:()=>renderCalls,
     focus:(value:boolean)=>{focused=value;w.dispatchEvent(new w.Event(value?'focus':'blur'));},
     visible:(value:boolean)=>{hidden=!value;document.dispatchEvent(new w.Event('visibilitychange'));},
     task:(at:number)=>{time=at;const callback=tasks.shift();assert.ok(callback);callback();assert.deepEqual(errors,[]);},taskCount:()=>tasks.length,
@@ -205,19 +205,44 @@ test('real animate drains queued input before integrating a delayed native relea
     f.at(8511.4);f.game.playerMovementKey('KeyD',true,false,7430.6);
     near(f.game.playerInputSeconds,0);near(f.steps.reduce((a,b)=>a+b,0),before);
     f.at(9119.3);f.game.playerMovementKey('KeyD',false,false,7684);
-    f.task(9200);f.pending(false);f.frame(9428.9,9278.6);
+    f.frame(9200,9200);f.pending(false);f.frame(9428.9,9278.6);
     near(f.game.playerInputSeconds,.2534);near(f.game.playerPosition.x,.2534*4.5);
     f.frame(9500,9500);near(f.steps.reduce((a,b)=>a+b,0),9.5);
     near(f.game.simulationClock.diagnostics.pendingSeconds,0);
   }finally{f.close();}
 });
 
- test('a continuously pending input hint cannot suppress simulation and rendering indefinitely',async()=>{
+test('pending discrete input preserves presentation and chronological simulation resumes after drain',async()=>{
+ const f=await fixture();try{
+  f.frame(1000,1000);const rendered=f.renders(),simulated=f.steps.reduce((a,b)=>a+b,0);f.pending(true);
+  f.frame(1050,1050);f.frame(1100,1100);assert.equal(f.renders(),rendered+2);near(f.steps.reduce((a,b)=>a+b,0),simulated);
+  f.pending(false);f.frame(1150,1150);near(f.steps.reduce((a,b)=>a+b,0),1.15);assert.equal(f.taskCount(),0);
+ }finally{f.close();}
+});
+test('continuous pointer input cannot suppress simulation or rendering',async()=>{
+ const f=await fixture();try{
+  f.frame(1000,1000);const rendered=f.renders();f.continuous(true);f.frame(1050,1050);f.frame(1100,1100);
+  assert.equal(f.renders(),rendered+2);near(f.steps.reduce((a,b)=>a+b,0),1.1);assert.equal(f.taskCount(),0);
+ }finally{f.close();}
+});
+
+for(const loss of ['blur','menu','mode'] as const)test(`pending discrete input respects ${loss} before it runs`,async()=>{
   const f=await fixture();try{
-    f.frame(1000,1000);const rendered=f.renders();f.pending(true);
-    f.frame(1050,1050);assert.equal(f.taskCount(),1);assert.equal(f.renders(),rendered);
-    f.task(1100);assert.equal(f.renders(),rendered+1);near(f.steps.reduce((a,b)=>a+b,0),1.05);
-    f.frame(1150,1150);assert.equal(f.taskCount(),1);f.task(1200);
-    assert.equal(f.renders(),rendered+2);near(f.steps.reduce((a,b)=>a+b,0),1.15);
+    f.frame(1000,1000);f.at(1010);f.key('keydown','KeyD');f.pending(true);f.frame(1050,1050);
+    f.at(1060);
+    if(loss==='blur')f.focus(false);
+    if(loss==='menu')f.game.interactionOpen=true;
+    if(loss==='mode')f.game.cameraMode='god';
+    const position={...f.game.playerPosition};f.frame(1100,1100);
+    assert.deepEqual(f.game.playerPosition,position);near(f.game.playerInputSeconds,0);assert.equal(f.game.keys.size,0);
   }finally{f.close();}
+});
+
+test('a release still queued across repeated rendering frames never accrues pressed time past its timestamp',async()=>{
+ const f=await fixture();try{
+  for(let at=1000;at<=9000;at+=1000)f.frame(at,at);f.at(9426.2);f.game.playerMovementKey('KeyA',true,false,9343.6);
+  f.pending(true);f.frame(9550,9530);f.frame(9600,9580);
+  f.at(9685.1);f.game.playerMovementKey('KeyA',false,false,9499.4);f.pending(false);f.frame(9800,9800);
+  near(f.game.playerInputSeconds,.1558);
+ }finally{f.close();}
 });

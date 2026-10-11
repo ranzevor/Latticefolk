@@ -3,6 +3,7 @@ import {scheduleNativePulse,type NativePulseRequest} from './native-pulse-schedu
 
 const lateWildlife='late wildlife intent cannot mutate a rematerialized entity or consume its saved cursor';
 const selected=new Set([
+  'coarse policy reply crossing a real materialize-unload transition is discarded and retry recovers',
   lateWildlife,
   'real playable scene keeps God View observer-only and uses authoritative ground',
   'ordinary walking crosses the home edge into the visible layout and preserves it through return and reload',
