@@ -800,14 +800,15 @@ class TownGame {
       if(file.toLowerCase().endsWith('.fbx')){
         const scene=await this.fbxLoader.loadAsync(assetUrl);
         if(key==='wellAsset')prepareWellGeometry(scene);
+        await prepareVisualPrograms(this.renderer,this.camera,this.scene,[scene]);
         this.assets.set(key,{scene,animations:scene.animations||[]});
       }else{
         const gltf=await this.gltfLoader.loadAsync(assetUrl);
+        await prepareVisualPrograms(this.renderer,this.camera,this.scene,[gltf.scene]);
         this.assets.set(key,{scene:gltf.scene,animations:gltf.animations});
       }
     }));
     this.assetLoadFailures=loaded.flatMap((result,index)=>result.status==='rejected'?[assetEntries[index]![0]]:[]);
-    await prepareVisualPrograms(this.renderer,this.camera,this.scene,[...this.assets.values()].map(asset=>asset.scene));
     for(const target of this.visualTargets)this.applyVisualTarget(target);
     this.assetsReady=this.assetLoadFailures.length===0;
     this.log(`视觉素材：Quaternius 已加载 ${assetEntries.length-this.assetLoadFailures.length}/${assetEntries.length}（Cube World + Ultimate Fantasy RTS + Medieval Village）`,'developer');
@@ -3976,6 +3977,7 @@ class TownGame {
     ui.world.dataset.persistenceRevision=String(this.persistenceRevision);
     ui.world.dataset.persistenceConflict=String(this.persistenceConflict);
     ui.world.dataset.persistenceLoadBlocked=String(this.persistenceLoadBlocked);
+    ui.world.dataset.assetsReady=String(this.assetsReady);
     ui.world.dataset.assetFailures=String(this.assetLoadFailures.length);
     ui.world.dataset.licensedVisualTargets=String(this.visualTargets.length);
     ui.world.dataset.licensedVisualsResolved=String(this.visualTargets.filter(target=>target.group.children.length>0).length);

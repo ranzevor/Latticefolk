@@ -135,10 +135,21 @@ test('visual targets are attached only after shader preparation finishes',async(
   const f=fixture();await f.r.initializePersistence();
   let release!:()=>void,entered!:()=>void;
   const compiling=new Promise<void>(resolve=>{entered=resolve;});
-  f.r.renderer.compileAsync=async(scene:THREE.Object3D)=>{entered();await new Promise<void>(resolve=>{release=resolve;});return scene;};
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  f.r.renderer.compileAsync=async(scene:THREE.Object3D)=>{entered();await gate;return scene;};
   const loading=f.r.loadVisualAssets();await compiling;
   assert.equal(f.r.assetsReady,false);
+  assert.equal(f.r.assets.size,0,'unprepared templates were exposed to new visual targets');
   for(const object of f.r.objects.values())assert.equal(object.mesh.children.length,0);
   release();await loading;assert.equal(f.r.assetsReady,true);
   for(const object of f.r.objects.values())assert.ok(object.mesh.children.length>0);
+});
+
+test('shader preparation failures remain asset failures and expose no unprepared template',async()=>{
+  const f=fixture();await f.r.initializePersistence();
+  f.r.renderer.compileAsync=async()=>{throw new Error('shader preparation failed');};
+  await f.r.loadVisualAssets();
+  assert.equal(f.r.assetsReady,false);assert.equal(f.r.assets.size,0);
+  assert.ok(f.r.assetLoadFailures.includes('crate_rts'));
+  for(const object of f.r.objects.values())assert.equal(object.mesh.children.length,0);
 });
