@@ -80,18 +80,19 @@ test('a historical event timestamp cannot be substituted after an already consum
 const source=fs.readFileSync(new URL('../e2e/helpers/native-waypoint.ts',import.meta.url),'utf8');
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function driveNativeWaypoint','async function driveNativeWaypoint')+'\ndriveNativeWaypoint;';
-test('a native pulse already reflected in the rendered diagnostic needs no extra frame',async()=>{
- let x=0,inputSeconds=0,finished=0;
+test('a native pulse already reflected in diagnostics is confirmed by a fresh release frame',async()=>{
+ let x=0,inputSeconds=0,finished=0,frames=0;const observers=new Set<()=>void>();
  const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?String(x):key==='playerZ'?'0':key==='playerInputSeconds'?String(inputSeconds):key==='simulationClock'?JSON.stringify({pendingSeconds:0}):'[]'});
  const context={performance:{now:()=>100,timeOrigin:100000},setTimeout,clearTimeout,cancelAnimationFrame(){},
-  requestAnimationFrame(){throw Error('redundant frame after applied native pulse');},
+  MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}disconnect(){observers.delete(this.notify);}},
+  requestAnimationFrame(callback:(at:number)=>void){frames++;setImmediate(()=>{for(const notify of observers)notify();callback(100);});return frames;},
   window:{nativeInputProbe:{start(){},async pulse(){x=1;inputSeconds=1/4.5;},async finish(){finished++;}},dispatchEvent(){throw Error('unexpected synthetic key');}},
   document:{pointerLockElement:canvas,querySelector:(s:string)=>s==='#game canvas'?canvas:{dataset}}};
  const result=await vm.runInNewContext(callback,context)({target:{x:1,z:0},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
- assert.equal(result.reached,true);assert.equal(result.inputSeconds,1/4.5);assert.equal(finished,1);
+ assert.equal(result.reached,true);assert.equal(result.inputSeconds,1/4.5);assert.equal(finished,1);assert.equal(frames,1);assert.equal(observers.size,0);
 });
 async function probeRoute(options:{releaseDelay?:number;fail?:boolean}={}){
-  let x=34,finished=0;const starts:unknown[]=[],pulses:NativePulseRequest[]=[];
+  let x=34,finished=0;const observers=new Set<()=>void>();const starts:unknown[]=[],pulses:NativePulseRequest[]=[];
   const clock=nativeInputClock({frameMs:500,onStep:(dt,keys)=>{x+=(Number(keys.has('KeyD'))-Number(keys.has('KeyA')))*(keys.has('ShiftLeft')?7.2:4.5)*dt;}});
   const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?x.toFixed(4):key==='playerZ'?'0':key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):'[]'});
   const probe={start:(route:unknown)=>{starts.push(route);},finish:async()=>{finished++;},pulse:async(request:NativePulseRequest)=>{
@@ -102,11 +103,13 @@ async function probeRoute(options:{releaseDelay?:number;fail?:boolean}={}){
     },request.durationMs+(options.releaseDelay??0)));
   }};
   const context={...clock.context,performance:{now:()=>clock.time,timeOrigin:100_000},
+    MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}disconnect(){observers.delete(this.notify);}},
+    requestAnimationFrame:(callback:(at:number)=>void)=>clock.context.requestAnimationFrame(()=>{for(const notify of observers)notify();callback(clock.time);}),
     window:{nativeInputProbe:probe,dispatchEvent:()=>{throw Error('probe must not synthesize page keyboard input');}},
     document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}}};
   const fn=vm.runInNewContext(callback,context);
   let result:any,error:unknown;
-  try{result=await fn({target:{x:40,z:0},timeoutMs:45_000,tolerance:.3,maxInputSeconds:2});}catch(e){error=e;}finally{clock.finish();}
+  try{result=await fn({target:{x:40,z:0},timeoutMs:45_000,tolerance:.3,maxInputSeconds:2});}catch(e){error=e;}finally{clock.finish();assert.equal(observers.size,0);}
   return {result,error,starts,pulses,finished};
 }
 test('optional probe preserves the original waypoint target and budgets without page key synthesis',async()=>{
