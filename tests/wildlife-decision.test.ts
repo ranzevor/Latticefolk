@@ -17,6 +17,16 @@ const animal=(patch:Partial<WildlifeState>={}):WildlifeState=>({
   sex:'female',generation:0,traits:{speed:2.4,size:.55,fertility:.9,wariness:.9},currentAction:'wander',lastDecisionAt:0,birthDay:1,...patch
 });
 
+for(const [species,action] of [['deer','graze'],['badger','forage']] as const)test(`${action} fallback excludes natural water and stone from food candidates`,()=>{
+  const resources=[{id:'water',tags:['water','nature','habitat'],distance:1,resourceAmount:10},
+    {id:'stone',tags:['nature','resource','stone'],distance:1,resourceAmount:10}];
+  const decide=(nearbyResources:typeof resources)=>fallbackWildlifeDecisions({requests:[{
+    wildlife:animal({species,hunger:85,thirst:20}),world:world({nearbyResources}),allowedActions:[action,'wander','rest']
+  }]}).decisions[0]!;
+  assert.equal(decide(resources).action,action);assert.equal(decide(resources).targetObjectId,undefined);
+  assert.equal(decide([...resources,{id:'food',tags:['nature','forage','food'],distance:5,resourceAmount:10}]).targetObjectId,'food');
+});
+
 test('wildlife fallback prioritizes nearby predator escape',()=>{
   const req:WildlifeDecisionBatchRequest={requests:[{
     wildlife:animal(),
@@ -367,4 +377,5 @@ test('domesticated sheep remains a bounded grazer without predator capability',(
   assert.equal(d.targetObjectId,'sheep_grass');
   assert.equal(d.targetWildlifeId,undefined);
 });
+
 

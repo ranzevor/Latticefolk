@@ -21,3 +21,7 @@ Fixtures may seed a legal saved starting state before game boot to isolate a sub
 ## Scope
 
 This repair does not finish #69. The remaining bakery/oven visual, scene-wide primitive cleanup, environment occlusion, terrain/coarse presentation, broader user journeys and performance/free-play acceptance remain open. Historical green runs do not replace fresh-head or merge-main evidence.
+
+The foreground time, short-press and pause/resume contract is documented in
+[Simulation clock and input](simulation-clock.md), including the distinction
+between controlled runtime replay and natural Chromium frame measurements.
