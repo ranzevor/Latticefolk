@@ -135,13 +135,15 @@ async function drivePlayerTo(
   page:Page,
   target:{x:number;z:number},
   timeoutMs=20_000,
-  tolerance=.35
+  tolerance=.35,
+  maxInputSeconds?:number
 ) {
-  const result=await page.evaluate(driveNativeWaypoint,{target,timeoutMs,tolerance});
+  const result=await page.evaluate(driveNativeWaypoint,{target,timeoutMs,tolerance,maxInputSeconds});
   expect(
     result.reached,
     `player failed to reach (${target.x}, ${target.z}); stopped at (${result.x.toFixed(3)}, ${result.z.toFixed(3)})`
   ).toBe(true);
+  if(maxInputSeconds!==undefined)expect(result.inputSeconds).toBeLessThanOrEqual(maxInputSeconds);
   return result;
 }
 
@@ -301,10 +303,10 @@ test('real playable scene keeps God View observer-only and uses authoritative gr
   // authoritative static/dynamic collision, but keep the steering loop inside the page.
   // Hosted software WebGL can make each Playwright protocol round-trip take seconds; the
   // previous per-pulse protocol loop turned a few seconds of gameplay into several minutes.
-  // Real trace showed this waypoint needs more wall-clock budget on software WebGL runners: ~0.6s simulation movement is not enough for the remaining distance.
-  await drivePlayerTo(page,{x:5.2,z:4.0},45_000,.55);
-  // Trace evidence: the second waypoint continued advancing under normal simulation but required more wall-clock budget on hosted software WebGL runners.
-  await drivePlayerTo(page,{x:13.95,z:3.4},45_000,.45);
+  // The original 18s and 25s route ceilings bound attempted movement time;
+  // the 45s wall limit also includes renderer and protocol latency.
+  await drivePlayerTo(page,{x:5.2,z:4.0},45_000,.55,18);
+  await drivePlayerTo(page,{x:13.95,z:3.4},45_000,.45,25);
   const treeApproach=await drivePlayerTo(page,{x:13.95,z:2.35},12_000,.28);
   expect(treeApproach.x).toBeGreaterThan(13.55);
   expect(treeApproach.x).toBeLessThan(14.4);
