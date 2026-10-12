@@ -158,14 +158,19 @@ test('shader preparation failures remain asset failures and expose no unprepared
 });
 
 for(const fail of [false,true])test(`asset publication follows real shadow staging ${fail?'failure':'success'}`,async()=>{
- const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0,wildlifeRendered=0;
+ const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0,wildlifeRendered=0,instancedRendered=0,wheatPending=false;
+ const load=f.r.gltfLoader.loadAsync;f.r.gltfLoader.loadAsync=async(url:string)=>{const result=await load(url);if(url.includes('crops_wheatStageB'))result.scene.name='wheat-template';return result;};
  Object.assign(f.r.renderer,{shadowMap:{enabled:true,needsUpdate:false},getRenderTarget:()=>null,getActiveCubeFace:()=>0,getActiveMipmapLevel:()=>0,
   getViewport:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissor:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissorTest:()=>false,
   setRenderTarget(){},setViewport(){},setScissor(){},setScissorTest(){},render(staging:THREE.Scene){
-   assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);if(staging.getObjectByName('raccoon-template'))wildlifeRendered++;else rendered++;
+   assert.equal(f.r.assets.size,fail?0:rendered-Number(wheatPending));assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);
+   let instanced=false;staging.traverse(node=>{if(node instanceof THREE.InstancedMesh)instanced=true;});
+   if(staging.getObjectByName('raccoon-template'))wildlifeRendered++;
+   else if(instanced){assert.equal(f.r.assets.has('farmWheat'),false);assert.equal(wheatPending,true);instancedRendered++;wheatPending=false;}
+   else{rendered++;if(staging.getObjectByName('wheat-template')){assert.equal(f.r.assets.has('farmWheat'),false);wheatPending=true;}}
    if(fail)throw new Error('shadow preparation failed');
   }});
- await f.r.loadVisualAssets();assert.ok(rendered>0);assert.equal(f.r.assetsReady,!fail);assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(wildlifeRendered,1);assert.equal(f.r.assetLoadFailures.length,fail?rendered+wildlifeRendered:0);
+ await f.r.loadVisualAssets();assert.ok(rendered>0);assert.equal(f.r.assetsReady,!fail);assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(wildlifeRendered,1);assert.equal(instancedRendered,fail?0:1);assert.equal(f.r.assetLoadFailures.length,fail?rendered+wildlifeRendered:0);
 });
 
 
