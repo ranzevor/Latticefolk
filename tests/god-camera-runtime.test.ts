@@ -5,6 +5,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js';
+import {SimulationClock,isPlayerMovementKey} from '../src/world/simulationClock.js';
 import {GodCameraInput,isGodCameraInputKey} from '../src/scene/godCameraInput.js';
 import {SunShadowView} from '../src/scene/sunShadow.js';
 import {refreshLocaleText} from '../src/ui/runtimeLocale.js';
@@ -21,7 +22,7 @@ function visit(n:ts.Node){
  ts.forEachChild(n,visit);
 }visit(ast);
 const transpile=(s:string)=>ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-const names=['changeLocale','refreshInteractionLabels','updateLocalizedUi','renderEvolutionPanel','bindInput','resetGodCameraInput','godCameraInputAllowed','godCameraKey','updateGodCamera','applyGodCameraInput','updateCameraShadow',
+const names=['changeLocale','refreshInteractionLabels','updateLocalizedUi','renderEvolutionPanel','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','resetGodCameraInput','godCameraInputAllowed','godCameraKey','updateGodCamera','applyGodCameraInput','updateCameraShadow',
  'toggleCameraMode','enterGodMode','enterFirstPerson','focusTown','focusSelected','moveGodTarget','openInteractionMenu','closeInteractionMenu'];
 const code=transpile(`return class Runtime {${names.map(k=>methods.get(k)).join('\n')}}`);
 // Actual input, camera, shadow and menu methods with real DOM listeners and OrbitControls.
@@ -32,15 +33,15 @@ function fixture(){
  const document=w.document as Document,ui=new Function('document',transpile(`return ${uiSource}`))(document);
  let time=0,focused=true,hidden=false,renderCalls=0;
  Object.defineProperty(document,'hasFocus',{value:()=>focused});Object.defineProperty(document,'hidden',{get:()=>hidden});
- const Runtime=new Function('localStorage','refreshLocaleText','visibleHudLogs','ui','document','addEventListener','THREE','i18n','isGodCameraInputKey','now','clamp',code)
-  (w.localStorage,refreshLocaleText,visibleHudLogs,ui,document,w.addEventListener.bind(w),THREE,i18n,isGodCameraInputKey,()=>time,(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v)));
+ const Runtime=new Function('isPlayerMovementKey','localStorage','refreshLocaleText','visibleHudLogs','ui','document','addEventListener','THREE','i18n','isGodCameraInputKey','now','clamp',code)
+  (isPlayerMovementKey,w.localStorage,refreshLocaleText,visibleHudLogs,ui,document,w.addEventListener.bind(w),THREE,i18n,isGodCameraInputKey,()=>time,(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v)));
  const r=new Runtime(),canvas=document.createElement('canvas');document.querySelector('#game')!.append(canvas);
  const camera=new THREE.PerspectiveCamera();camera.position.set(12,18,12);
  const orbit=new OrbitControls(camera,canvas);orbit.target.set(0,0,0);orbit.update();
  const events=new Map<string,()=>void>();const controls={isLocked:false,addEventListener:(name:string,fn:()=>void)=>events.set(name,fn),
   lock(){this.isLocked=true;events.get('lock')?.();},unlock(){this.isLocked=false;events.get('unlock')?.();}};
  const shadowStatement=methods.get('updateUi')!.split('\n').find(line=>line.includes('ui.world.dataset.shadowView='))!;
- Object.assign(r,{logs:[],day:1,weather:'clear',gameTimeText:()=> '08:15',worldSeason:()=> 'spring',updatePrompt(){},persistenceReady:true,camera,orbit,controls,keys:new Set(),godCameraInput:new GodCameraInput(),cameraMode:'god',interactionOpen:false,
+ Object.assign(r,{logs:[],day:1,weather:'clear',gameTimeText:()=> '08:15',worldSeason:()=> 'spring',updatePrompt(){},persistenceReady:true,camera,orbit,controls,keys:new Set(),godCameraInput:new GodCameraInput(),simulationClock:new SimulationClock(),cameraMode:'god',interactionOpen:false,
   renderer:{domElement:canvas,setSize(){},render(){renderCalls++;}},sunShadow:new SunShadowView(new THREE.DirectionalLight()),shadowFocus:new THREE.Vector3(),
   firstPersonRotation:new THREE.Euler(),playerPosition:{x:0,z:0},perceptionEpoch:0,coarseWorld:{activeBounds:()=>({minX:-36,maxX:36,minZ:-36,maxZ:36})},
   godPointer:new THREE.Vector2(),objects:new Map(),cancelPlayerTargeting(){},suspendPlayerWildlifeFollowPaths(){},toast(){},
