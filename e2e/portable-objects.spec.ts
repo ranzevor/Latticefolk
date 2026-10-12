@@ -1,4 +1,4 @@
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext } from './helpers/native-input-probe.js';
 import type { CoarseChunkState, DecisionResponse, NpcState, WorldObjectState, WorldPersistenceSnapshot } from '../src/types.js';
 import { fineParcelFixture } from './helpers/parcel-fixture.js';
 import { ensureWildlifePopulations } from '../src/world/ecology.js';
@@ -304,3 +304,4 @@ test('bounded fine NPC pickup reclaims a dropped parcel once and remains consume
   await info.attach('npc-parcel-pickup-conservation',{body:Buffer.from(JSON.stringify({drop,before,after,proposals},null,2)),contentType:'application/json'});
   expect(errors).toEqual([]);
 });
+

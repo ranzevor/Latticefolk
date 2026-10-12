@@ -8,7 +8,13 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
   if(!canvas||document.pointerLockElement!==canvas)throw new Error('Parcel route requires the locked game canvas');
   const direction=key==='KeyA'?-1:1;
   const deadline=performance.now()+90_000;
-  let yaw=0,held=false,detours=0,unchanged=0;
+  let yaw=0,detours=0,unchanged=0;
+  const probe=(window as unknown as {nativeInputProbe?:{
+    start:(route:unknown)=>void;
+    pulse:(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>Promise<{result?:{skipped?:boolean};releasedEventAt?:number}>;
+    finish:()=>Promise<void>;
+  }}).nativeInputProbe;
+  if(!probe)throw new Error('Parcel route requires native input probe');
   let phase:'cross'|'offset'|'bypass'|'restore'='cross';
   let bypassX=0;
   const read=()=>{
@@ -33,10 +39,6 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
     Object.defineProperties(event,{movementX:{value:(next-yaw)/.002},movementY:{value:0}});
     canvas.dispatchEvent(event);yaw=next;
   };
-  const release=()=>{
-    if(held)window.dispatchEvent(new KeyboardEvent('keyup',{code:key,bubbles:true}));
-    held=false;
-  };
   const history:Array<{phase:string;x:number;z:number;elapsedMs:number}>=[];
   const record=(p:{x:number;z:number})=>{
     history.push({phase,...p,elapsedMs:performance.now()-(deadline-90_000)});
@@ -52,6 +54,7 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
   };
   let previous=read();record(previous);
   try {
+    probe.start({key,targetX,laneZ,deadline});
     while(performance.now()<deadline){
       if(document.pointerLockElement!==canvas)throw new Error('Parcel route lost pointer lock');
       if(pending()>0){await nextFrame();continue;}
@@ -76,14 +79,22 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
       rotate(Math.atan2(direction*dz,direction*dx));
       const pulseMs=Math.min(250,Math.hypot(dx,dz)/4.5*1000,deadline-performance.now());
       if(!(pulseMs>0))break;
-      window.dispatchEvent(new KeyboardEvent('keydown',{code:key,bubbles:true}));held=true;
-      await new Promise<void>(resolve=>setTimeout(()=>{release();resolve();},pulseMs));
-      await nextFrame();
+      const release=await probe.pulse({codes:[key],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
+      if(release.result?.skipped)break;
+      const releasedAt=release.releasedEventAt;
+      if(typeof releasedAt!=='number'||!Number.isFinite(releasedAt)||releasedAt<0)throw new Error('Parcel route requires a trusted release boundary');
+      while(performance.now()<deadline){
+        const raw=document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationConsumedThrough;
+        const consumed=raw?.trim()?Number(raw):NaN;
+        if(!Number.isFinite(consumed)||consumed<0)throw new Error('Parcel route consumed boundary is unavailable');
+        if(consumed>=releasedAt&&pending()===0)break;
+        await nextFrame();
+      }
     }
     throw failure('Parcel route exceeded its bounded input budget',read());
   } finally {
-    // Release in the same page turn, rather than overshooting during a CDP reply.
-    release();rotate(0);
+    rotate(0);await probe.finish();
   }
 }
+
 

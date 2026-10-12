@@ -3,6 +3,7 @@ import {scheduleNativePulse,type NativePulseRequest} from './native-pulse-schedu
 
 const lateWildlife='late wildlife intent cannot mutate a rematerialized entity or consume its saved cursor';
 const selected=new Set([
+  'fine NPC parcel belongs to its source chunk and survives native unload/revisit before one-shot pickup',
   'coarse policy reply crossing a real materialize-unload transition is discarded and retry recovers',
   lateWildlife,
   'real playable scene keeps God View observer-only and uses authoritative ground',
@@ -105,4 +106,5 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
 
 export {expect};
 export type {Page,TestInfo,APIRequestContext};
+
 

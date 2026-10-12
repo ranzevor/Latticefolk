@@ -22,9 +22,17 @@ async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'sta
   }});
   const canvas={dispatchEvent:(event:{movementX:number})=>{yaw+=event.movementX*.002;}};
   const dataset=new Proxy({},{get:(_,key)=>key==='playerX'?p.x.toFixed(4):key==='playerZ'?p.z.toFixed(4)
-    :key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):key==='wildlifeVisuals'?'[]':undefined,
+    :key==='simulationConsumedThrough'?String(clock.clock.consumedThroughMs):key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):key==='wildlifeVisuals'?'[]':undefined,
     set:()=>{throw Error('diagnostics are read only');}});
-  const context={...clock.context,document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}},MouseEvent:class{}};
+  let started=0,finished=0;
+  const probe={start(){assert.equal(started,finished);started++;},async pulse(request:{codes:string[];durationMs:number;deadlineEpochMs:number}){
+    assert.equal(started,finished+1);assert.deepEqual(Array.from(request.codes),[request.codes[0]]);
+    assert.ok(request.deadlineEpochMs>clock.time);assert.ok(request.durationMs>0&&request.durationMs<=250);
+    for(const code of request.codes)clock.context.window.dispatchEvent({type:'keydown',code});
+    await new Promise<void>(resolve=>clock.context.setTimeout(()=>{for(const code of request.codes)clock.context.window.dispatchEvent({type:'keyup',code});resolve();},request.durationMs));
+    return {releasedEventAt:clock.time};
+  },async finish(){finished++;}};
+  const context={...clock.context,performance:{...clock.context.performance,timeOrigin:0},window:{nativeInputProbe:probe,dispatchEvent(){throw Error('Synthetic keyboard input is forbidden');}},document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}},MouseEvent:class{}};
   const fn=vm.runInNewContext(callback,context) as (args:object)=>Promise<{position:{x:number;z:number};detours:number}>;
   try{
     if(prime!=='none'&&prime!=='overshot')await new Promise<void>(resolve=>clock.context.requestAnimationFrame(resolve));
@@ -54,7 +62,7 @@ async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'sta
     assert.equal(clock.clock.diagnostics.pendingSeconds,0);assert.ok(clock.time-outboundAt<=90000);
     assert.ok(Math.abs(yaw)<1e-12);assert.equal(clock.clock.diagnostics.inputOverflowCount,0);
     if(obstacle)assert.equal(outbound.detours,1);
-  }finally{clock.finish();}
+  }finally{clock.finish();assert.equal(started,['starved','at-goal','overshot'].includes(prime)?1:2);assert.equal(finished,started);}
 }
 for(const frameMs of [16,500,1000,1800])test(`parcel round trip settles both key releases at ${frameMs} ms frames`,()=>replay(frameMs));
 for(const frameMs of [100,1000])test(`parcel detour restores its original lane at ${frameMs} ms frames`,()=>replay(frameMs,true));
@@ -64,3 +72,4 @@ test('parcel route cannot accept its initial goal while debt remains',()=>replay
 test('parcel route keeps initial debt and issues no input when the original deadline expires',()=>replay(2500,false,'starved'));
 
 test('parcel route corrects an overshot inbound goal before reporting arrival',()=>replay(1000,false,'overshot'));
+
