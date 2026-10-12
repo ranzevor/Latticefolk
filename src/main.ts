@@ -1491,13 +1491,35 @@ class TownGame {
         const itemTransferVersion=this.portables.checkpoint.capture();
         const snapshot=this.buildWorldSnapshot();
         const expectedRevision=this.persistenceRevision;
-        const response=await fetch('/api/world/state',{
-          method:'POST',
-          headers:{'content-type':'application/json'},
-          body:JSON.stringify({snapshot,expectedRevision})
-        });
+        const controller=new AbortController();
+        let deadline:ReturnType<typeof setTimeout>|undefined;
+        let response:Response,payload:unknown;
+        try{
+          ({response,payload}=await Promise.race([
+            (async()=>{
+              const response=await fetch('/api/world/state',{
+                method:'POST',
+                headers:{'content-type':'application/json'},
+                body:JSON.stringify({snapshot,expectedRevision}),
+                signal:controller.signal
+              });
+              const payload=response.status===409
+                ?await response.json().catch(()=>({}))
+                :response.ok?await response.json():undefined;
+              return {response,payload};
+            })(),
+            new Promise<never>((_resolve,reject)=>{
+              deadline=setTimeout(()=>{
+                reject(new Error(i18n.t('persistence.requestTimedOut')));
+                controller.abort();
+              },30000);
+            })
+          ]));
+        }finally{
+          if(deadline!==undefined)clearTimeout(deadline);
+        }
         if(response.status===409){
-          const conflict=await response.json().catch(()=>({})) as {currentRevision?:unknown};
+          const conflict=payload as {currentRevision?:unknown};
           const currentRevision=Number(conflict.currentRevision);
           this.persistenceConflict=true;
           this.clearMovablePersistenceQueue();
@@ -1506,7 +1528,7 @@ class TownGame {
             :i18n.t('persistence.conflictUnknown',{local:expectedRevision}));
         }
         if(!response.ok)throw new Error(`HTTP ${response.status}`);
-        const saved=await response.json() as {revision?:unknown};
+        const saved=payload as {revision?:unknown};
         const revision=Number(saved.revision);
         if(!Number.isSafeInteger(revision)||revision!==expectedRevision+1){
           throw new Error(i18n.t('persistence.invalidAcknowledgement'));
