@@ -103,3 +103,20 @@ test('queue overflow preserves accepted input/time debt and inserts a bounded re
   assert.equal(f.clock.record(5150,east),true);f.frame(5250);
   near(f.steps.filter(s=>s.input).reduce((n,s)=>n+s.seconds,0),.355);
 });
+
+
+for(const [press,release,expected] of [[2500,2800,.3],[1500,2300,.3],[4800,5100,.3]])test(`late native interval ${press}-${release} remains in unconsumed foreground debt`,()=>{
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ assert.equal(f.clock.recordEvent(press,5200,east),true);assert.equal(f.clock.recordEvent(release,5201,undefined),true);
+ f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ f.clock.advanceFrame(5500,5501,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),expected);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
+});
+
+test('retained input insertion cannot rewind consumed time or bypass handled-time ordering',()=>{
+ const f=fixture();f.frame(0);f.frame(1000);
+ assert.equal(f.clock.recordEvent(100,1200,east),true);assert.equal(f.clock.recordEvent(300,1201,undefined),true);f.frame(1300);
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),0);near(f.steps.reduce((sum,s)=>sum+s.seconds,0),1.3);
+ assert.equal(f.clock.recordEvent(1200,1299,east),false);assert.equal(f.clock.diagnostics.resetReason,'invalid-time');
+});

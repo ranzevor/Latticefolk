@@ -266,3 +266,16 @@ test('catch-up frames ground animated NPC visuals once after all simulation subs
     f.frame(2150);assert.deepEqual(grounded,[40,42]);assert.equal(f.game.npcVisualsDirty,false);
   }finally{f.close();}
 });
+
+
+test('late trusted key edges inside retained world debt keep their unconsumed duration',async()=>{
+ const f=await fixture();try{
+  f.frame(5000,5000);near(f.game.simulationClock.consumedThroughMs,2000);
+  f.at(5200);f.game.playerMovementKey('KeyD',true,false,2500);
+  f.at(5201);f.game.playerMovementKey('KeyD',false,false,2800);
+  f.frame(5400,5300);f.frame(5501,5500);
+  near(f.game.playerInputSeconds,.3);near(f.game.playerPosition.x,1.35);
+  near(f.steps.reduce((sum,dt)=>sum+dt,0),5.5);near(f.game.minuteOfDay,495+5.5*2.2);
+  near(f.game.simulationClock.diagnostics.pendingSeconds,0);assert.deepEqual(f.errors,[]);
+ }finally{f.close();}
+});

@@ -35,12 +35,16 @@ export class SimulationClock {
   recordEvent(eventAt:number|undefined,handledAt:number,input:PlayerMovementInput|undefined):boolean {
     if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
     const at=this.sampledAt!==undefined&&typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt?eventAt:handledAt;
-    return this.record(Math.max(at,this.sampledAt??0,this.lastFrameAt??0,this.changes.at(-1)?.at??0),input);
+    return this.recordInput(Math.max(at,this.sampledAt??0,this.changes.at(-1)?.at??0),input,true);
   }
 
   record(at:number,input:PlayerMovementInput|undefined):boolean {
+    return this.recordInput(at,input,false);
+  }
+
+  private recordInput(at:number,input:PlayerMovementInput|undefined,allowFrameDebt:boolean):boolean {
     const latest=this.changes.at(-1);
-    if(!Number.isFinite(at)||at<0||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(latest&&at<latest.at)){
+    if(!Number.isFinite(at)||at<0||(this.sampledAt!==undefined&&at<this.sampledAt)||(!allowFrameDebt&&this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(latest&&at<latest.at)){
       this.reset('invalid-time');return false;
     }
     if(this.sampledAt===undefined){this.sampledAt=at;this.lastFrameAt=at;}
@@ -97,3 +101,4 @@ export class SimulationClock {
     return a===b||Boolean(a&&b&&a.forward===b.forward&&a.right===b.right&&a.sprint===b.sprint&&a.directionX===b.directionX&&a.directionZ===b.directionZ);
   }
 }
+
