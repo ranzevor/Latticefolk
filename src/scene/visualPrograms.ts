@@ -25,7 +25,7 @@ export async function prepareVisualPrograms(renderer:Pick<THREE.WebGLRenderer,'c
   finally{releaseStaging(staging);}
 }
 
-type ShadowRenderer=Pick<THREE.WebGLRenderer,'render'|'getRenderTarget'|'setRenderTarget'|'getActiveCubeFace'|'getActiveMipmapLevel'|'getViewport'|'setViewport'|'getScissor'|'setScissor'|'getScissorTest'|'setScissorTest'>&{shadowMap:Pick<THREE.WebGLRenderer['shadowMap'],'enabled'|'needsUpdate'>};
+type ShadowRenderer=Pick<THREE.WebGLRenderer,'compile'|'render'|'getRenderTarget'|'setRenderTarget'|'getActiveCubeFace'|'getActiveMipmapLevel'|'getViewport'|'setViewport'|'getScissor'|'setScissor'|'getScissorTest'|'setScissorTest'>&{shadowMap:Pick<THREE.WebGLRenderer['shadowMap'],'enabled'|'needsUpdate'>};
 export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera,scene:THREE.Scene,templates:Iterable<THREE.Object3D>){
   if(!renderer.shadowMap.enabled)return;
   const staging=new THREE.Scene();
@@ -56,6 +56,7 @@ export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera
   try{
     renderer.shadowMap.needsUpdate=true;
     renderer.setViewport(new THREE.Vector4(0,0,1,1));renderer.setScissor(new THREE.Vector4(0,0,1,1));renderer.setScissorTest(true);
+    renderer.compile(staging,camera);
     renderer.render(staging,camera);
   }finally{
     renderer.setRenderTarget(previous,cubeFace,mipLevel);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);

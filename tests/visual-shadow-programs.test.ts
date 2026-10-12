@@ -6,7 +6,7 @@ import {sourceGltf} from './helpers/source-gltf.js';
 function renderer(render:(scene:THREE.Object3D,camera:THREE.Camera)=>void){
  const original=new THREE.WebGLRenderTarget(4,4),viewport=new THREE.Vector4(1,2,3,4),scissor=new THREE.Vector4(5,6,7,8);
  let target:THREE.WebGLRenderTarget|null=original,cube=2,mip=3,scissorTest=true;
- const api={shadowMap:{enabled:true,needsUpdate:false},render,
+ const api={shadowMap:{enabled:true,needsUpdate:false},render,compile:()=>new Set<THREE.Material>(),
   getRenderTarget:()=>target,setRenderTarget:(value:THREE.WebGLRenderTarget|null,face=0,level=0)=>{target=value;cube=face;mip=level;},
   getActiveCubeFace:()=>cube,getActiveMipmapLevel:()=>mip,
   getViewport:(value:THREE.Vector4)=>value.copy(viewport),setViewport:(value:THREE.Vector4)=>viewport.copy(value),
@@ -63,4 +63,36 @@ test('program preparation releases cloned skeletons without disposing the source
  let clones=0,disposed=0;
  await prepareVisualPrograms({compileAsync:async(root:THREE.Object3D)=>{root.traverse(object=>{const mesh=object as THREE.SkinnedMesh;if(mesh.isSkinnedMesh){clones++;assert.equal(originals.has(mesh.skeleton),false);mesh.skeleton.dispose=()=>disposed++;}});return root;}},new THREE.PerspectiveCamera(),new THREE.Scene(),[asset.scene]);
  assert.ok(clones);assert.equal(disposed,clones);assert.equal(asset.scene.parent,null);
+});
+
+
+test('shadow warmup initializes the detached scene light state before its first depth pass',async()=>{
+ const {WebGLRenderStates}=await import(new URL('../node_modules/three/src/renderers/webgl/WebGLRenderStates.js',import.meta.url).href);
+ const states=new WebGLRenderStates({has:()=>false}),scene=new THREE.Scene(),sun=new THREE.DirectionalLight();sun.castShadow=true;
+ scene.add(sun,new THREE.HemisphereLight());const camera=new THREE.PerspectiveCamera(),mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());
+ let prepared=0,rendered=0;
+ const r=renderer(root=>{
+  const state=states.get(root);state.init(camera);
+  root.traverseVisible(object=>{const light=object as THREE.Light;if(light.isLight){state.pushLight(light);if(light.castShadow)state.pushShadow(light);}});
+  assert.equal(state.state.lights.state.directional.length,1);
+  assert.equal(state.state.lights.state.directionalShadowMap.length,1);
+  assert.equal(state.state.lights.state.hemi.length,1);
+  rendered++;state.setupLights();
+ });
+ r.api.compile=(root,c)=>{
+  assert.equal(c,camera);const state=states.get(root);state.init(c);
+  root.traverseVisible(object=>{const light=object as THREE.Light;if(light.isLight){state.pushLight(light);if(light.castShadow)state.pushShadow(light);}});
+  state.setupLights();prepared++;return new Set<THREE.Material>();
+ };
+ prepareVisualShadows(r.api,camera,scene,[mesh]);assert.equal(prepared,1);assert.equal(rendered,1);r.check();
+});
+
+test('shadow light-state preparation failure restores renderer state and releases cloned resources',()=>{
+ const scene=new THREE.Scene(),sun=new THREE.DirectionalLight();sun.castShadow=true;scene.add(sun);
+ const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial(),2);let released=0,shared=0;
+ mesh.addEventListener('dispose',()=>shared++);mesh.geometry.addEventListener('dispose',()=>shared++);mesh.material.addEventListener('dispose',()=>shared++);
+ const r=renderer(()=>assert.fail('depth render must not run after compilation failure'));
+ r.api.compile=root=>{root.traverse(object=>{if(object instanceof THREE.InstancedMesh)object.addEventListener('dispose',()=>released++);});throw new Error('light state preparation failed');};
+ assert.throws(()=>prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[mesh]),/light state preparation failed/);
+ assert.equal(released,1);assert.equal(shared,0);r.check();
 });
