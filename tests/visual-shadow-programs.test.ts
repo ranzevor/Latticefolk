@@ -37,3 +37,30 @@ test('shadow warmup disposes only cloned skeletons of real skinned assets',async
  prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[asset.scene]);assert.equal(disposed,clones);assert.ok(clones);r.check();assert.equal(asset.scene.parent,null);
 });
 
+
+for(const fail of [false,true])test(`program preparation releases owned instancing buffers on ${fail?'failure':'success'}`,async()=>{
+ const {prepareVisualPrograms}=await import('../src/scene/visualPrograms.js');
+ const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial(),12);
+ let cloned=0,disposed=0,shared=0;mesh.addEventListener('dispose',()=>shared++);mesh.geometry.addEventListener('dispose',()=>shared++);mesh.material.addEventListener('dispose',()=>shared++);
+ const renderer={compileAsync:async(root:THREE.Object3D)=>{root.traverse(node=>{if(node instanceof THREE.InstancedMesh){assert.notEqual(node,mesh);cloned++;node.addEventListener('dispose',()=>disposed++);}});if(fail)throw new Error('compile failure');return root;}};
+ const run=prepareVisualPrograms(renderer,new THREE.PerspectiveCamera(),new THREE.Scene(),[mesh]);
+ if(fail)await assert.rejects(run,/compile failure/);else await run;
+ assert.equal(cloned,1);assert.equal(disposed,1);assert.equal(shared,0);
+});
+for(const fail of [false,true])test(`shadow preparation releases owned instancing buffers on ${fail?'failure':'success'}`,()=>{
+ const scene=new THREE.Scene();scene.add(new THREE.DirectionalLight());
+ const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial(),12);let disposed=0,shared=0;
+ mesh.addEventListener('dispose',()=>shared++);mesh.geometry.addEventListener('dispose',()=>shared++);mesh.material.addEventListener('dispose',()=>shared++);
+ const r=renderer(root=>{root.traverse(node=>{if(node instanceof THREE.InstancedMesh){assert.notEqual(node,mesh);node.addEventListener('dispose',()=>disposed++);}});if(fail)throw new Error('render failure');});
+ const run=()=>prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[mesh]);if(fail)assert.throws(run,/render failure/);else run();
+ assert.equal(disposed,1);assert.equal(shared,0);r.check();
+});
+
+test('program preparation releases cloned skeletons without disposing the source',async()=>{
+ const {prepareVisualPrograms}=await import('../src/scene/visualPrograms.js');
+ const asset=await sourceGltf('quaternius/cube-world/Character_Female_1.gltf');const originals=new Set<THREE.Skeleton>();
+ asset.scene.traverse(object=>{if((object as THREE.SkinnedMesh).isSkinnedMesh)originals.add((object as THREE.SkinnedMesh).skeleton);});
+ let clones=0,disposed=0;
+ await prepareVisualPrograms({compileAsync:async(root:THREE.Object3D)=>{root.traverse(object=>{const mesh=object as THREE.SkinnedMesh;if(mesh.isSkinnedMesh){clones++;assert.equal(originals.has(mesh.skeleton),false);mesh.skeleton.dispose=()=>disposed++;}});return root;}},new THREE.PerspectiveCamera(),new THREE.Scene(),[asset.scene]);
+ assert.ok(clones);assert.equal(disposed,clones);assert.equal(asset.scene.parent,null);
+});

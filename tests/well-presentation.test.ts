@@ -120,3 +120,13 @@ test('replacing and unloading well visuals preserve shared geometry, materials a
   assert.equal(mesh(targets[1]!.group).geometry,shared);assert.equal(state.resourceAmount,7);
 });
 
+
+test('asset loading prepares the instanced wheat variant before publishing readiness',async()=>{
+  const source=new THREE.Group(),geometry=new THREE.BoxGeometry(),material=new THREE.MeshStandardMaterial();
+  source.add(new THREE.Mesh(geometry,material));let preparedInstances=0,sharedDisposals=0;
+  geometry.addEventListener('dispose',()=>sharedDisposals++);material.addEventListener('dispose',()=>sharedDisposals++);
+  const runtime=Object.assign(new Runtime(),{renderer:{shadowMap:{enabled:false},compileAsync:async(root:THREE.Object3D)=>{root.traverse(node=>{if(node instanceof THREE.InstancedMesh){preparedInstances++;assert.equal(node.count,12);assert.equal(node.geometry,geometry);assert.equal(node.material,material);}});}},camera:new THREE.PerspectiveCamera(),scene:new THREE.Scene(),assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[],
+    fbxLoader:{loadAsync:async()=>new THREE.Group()},gltfLoader:{loadAsync:async(url:string)=>({scene:url.includes('crops_wheatStageB')?source:new THREE.Group(),animations:[]})},
+    wildlifeVisualRuntime:{load:async()=>{},getState:()=>({status:'ready'})},log(){}});
+  await runtime.loadVisualAssets();assert.equal(preparedInstances,1);assert.equal(runtime.assetsReady,true);assert.equal(sharedDisposals,0);assert.equal(runtime.assets.get('farmWheat').scene,source);assert.equal(source.children[0] instanceof THREE.InstancedMesh,false);
+});

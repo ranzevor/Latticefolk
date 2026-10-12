@@ -814,6 +814,13 @@ class TownGame {
         const gltf=await this.gltfLoader.loadAsync(assetUrl);
         await prepareVisualPrograms(this.renderer,this.camera,this.scene,[gltf.scene]);
         prepareVisualShadows(this.renderer,this.camera,this.scene,[gltf.scene]);
+        if(key==='farmWheat'){
+          const rows=farmCropRows(gltf.scene);
+          try{
+            await prepareVisualPrograms(this.renderer,this.camera,this.scene,[rows]);
+            prepareVisualShadows(this.renderer,this.camera,this.scene,[rows]);
+          }finally{disposeFarmCropRows(rows);}
+        }
         this.assets.set(key,{scene:gltf.scene,animations:gltf.animations});
       }
     });

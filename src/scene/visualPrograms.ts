@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import {clone} from 'three/examples/jsm/utils/SkeletonUtils.js';
 
+function releaseStaging(root:THREE.Object3D){
+  const skeletons=new Set<THREE.Skeleton>();
+  root.traverse(object=>{
+    if((object as THREE.SkinnedMesh).isSkinnedMesh)skeletons.add((object as THREE.SkinnedMesh).skeleton);
+    if((object as THREE.InstancedMesh).isInstancedMesh)(object as THREE.InstancedMesh).dispose();
+  });
+  for(const skeleton of skeletons)skeleton.dispose();
+  root.clear();
+}
+
 export async function prepareVisualPrograms(renderer:Pick<THREE.WebGLRenderer,'compileAsync'>,camera:THREE.Camera,scene:THREE.Scene,templates:Iterable<THREE.Object3D>){
   const staging=new THREE.Group();
   for(const template of templates){
@@ -12,7 +22,7 @@ export async function prepareVisualPrograms(renderer:Pick<THREE.WebGLRenderer,'c
     staging.add(model);
   }
   try{await renderer.compileAsync(staging,camera,scene);}
-  finally{staging.clear();}
+  finally{releaseStaging(staging);}
 }
 
 type ShadowRenderer=Pick<THREE.WebGLRenderer,'render'|'getRenderTarget'|'setRenderTarget'|'getActiveCubeFace'|'getActiveMipmapLevel'|'getViewport'|'setViewport'|'getScissor'|'setScissor'|'getScissorTest'|'setScissorTest'>&{shadowMap:Pick<THREE.WebGLRenderer['shadowMap'],'enabled'|'needsUpdate'>};
@@ -20,7 +30,7 @@ export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera
   if(!renderer.shadowMap.enabled)return;
   const staging=new THREE.Scene();
   staging.fog=scene.fog;staging.environment=scene.environment;
-  const shadows:THREE.LightShadow[]=[],skeletons=new Set<THREE.Skeleton>();
+  const shadows:THREE.LightShadow[]=[];
   scene.traverseVisible(object=>{
     const light=object as THREE.Light&{shadow?:THREE.LightShadow;target?:THREE.Object3D};
     if(!light.isLight)return;
@@ -36,7 +46,6 @@ export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera
     model.traverse(object=>{
       const mesh=object as THREE.SkinnedMesh;
       if(mesh.isMesh){mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;}
-      if(mesh.isSkinnedMesh)skeletons.add(mesh.skeleton);
     });
     staging.add(model);
   }
@@ -52,8 +61,7 @@ export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera
     renderer.setRenderTarget(previous,cubeFace,mipLevel);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);
     renderer.shadowMap.needsUpdate=needsUpdate;
     for(const shadow of shadows)shadow.dispose();
-    for(const skeleton of skeletons)skeleton.dispose();
-    staging.clear();
+    releaseStaging(staging);
   }
 }
 
