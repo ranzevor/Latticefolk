@@ -1,3 +1,5 @@
+import {WildlifeVisualRuntime} from '../src/scene/wildlifeVisualRuntime.js';
+import {resolveWildlifeAsset} from '../src/scene/wildlifeAssetResolver.js';
 import {prepareVisualPrograms,prepareVisualShadows} from '../src/scene/visualPrograms.js';
 import * as worldRandom from '../src/world/worldRandom.js';
 import assert from 'node:assert/strict';
@@ -46,6 +48,7 @@ function fixture(snapshot:WorldPersistenceSnapshot|null=null){
     objects:new Map(),npcs:new Map(),wildlife:new Map(),materializedChunks:new Map(),fineChunkCache:new Map(),wildlifeLineage:new Map(),wildlifeTransfers:new Map(),lineageEpoch:0,visualTargets:[],physics:new FinePhysicsAuthority(),
     movableDirty:false,scheduleMovablePersistence(){},groundHeightAt:()=>0,reconcileLineageOffspring(){},updateFineChunkMaterialization(){},worldSeason:()=> 'spring',
     addBuilding(){},addObject(){},addAssetObject(){},addTreeDecoration(){},setupNpcs(){io.setups++;},log(){},toast(){},event(){},itemName:(kind:string)=>kind,parcelLabel:(kind:string,count:number)=>`${kind} ${count}`});
+  r.wildlifeVisualRuntime=new WildlifeVisualRuntime({load:async()=>({scene:Object.assign(model(),{name:'raccoon-template'}),animations:Object.values(resolveWildlifeAsset('raccoon').definition!.clips).map(name=>new THREE.AnimationClip(name,1,[]))})},async scene=>{await prepareVisualPrograms(r.renderer,r.camera,r.scene,[scene]);prepareVisualShadows(r.renderer,r.camera,r.scene,[scene]);});
   r.streamedPresentation=new StreamedPresentation({objects:r.objects,create(){throw Error('No streamed layout in decoration fixture');},release(){}});
   r.playerOverlapsObjectTrigger=(id:string)=>r.physics.overlappingTriggers(r.objects.get(id).state.position).some((t:any)=>t.id===`object-trigger:${id}`);
   r.portables=new PortableObjectRuntime(r);
@@ -155,12 +158,23 @@ test('shader preparation failures remain asset failures and expose no unprepared
 });
 
 for(const fail of [false,true])test(`asset publication follows real shadow staging ${fail?'failure':'success'}`,async()=>{
- const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0;
+ const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0,wildlifeRendered=0;
  Object.assign(f.r.renderer,{shadowMap:{enabled:true,needsUpdate:false},getRenderTarget:()=>null,getActiveCubeFace:()=>0,getActiveMipmapLevel:()=>0,
   getViewport:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissor:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissorTest:()=>false,
   setRenderTarget(){},setViewport(){},setScissor(){},setScissorTest(){},render(staging:THREE.Scene){
-   assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);rendered++;
+   assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);if(staging.getObjectByName('raccoon-template'))wildlifeRendered++;else rendered++;
    if(fail)throw new Error('shadow preparation failed');
   }});
- await f.r.loadVisualAssets();assert.ok(rendered>0);assert.equal(f.r.assetsReady,!fail);assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(f.r.assetLoadFailures.length,fail?rendered:0);
+ await f.r.loadVisualAssets();assert.ok(rendered>0);assert.equal(f.r.assetsReady,!fail);assert.equal(f.r.assets.size,fail?0:rendered);assert.equal(wildlifeRendered,1);assert.equal(f.r.assetLoadFailures.length,fail?rendered+wildlifeRendered:0);
+});
+
+
+test('world readiness includes the shared wildlife preparation gate and permits failed preparation retry',async()=>{
+ const f=fixture();let release!:()=>void,entered!:()=>void,fail=false;
+ const gate=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{entered=resolve;});
+ f.r.renderer.compileAsync=async(scene:THREE.Object3D)=>{if(scene.getObjectByName('raccoon-template')){entered();await gate;if(fail)throw Error('wildlife shader unavailable');}return scene;};
+ const first=f.r.loadVisualAssets();await started;await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(f.r.assets.size,35);assert.equal(f.r.assetsReady,false);assert.equal(f.r.wildlifeVisualRuntime.getState('raccoon').status,'loading');
+ fail=true;release();await first;assert.equal(f.r.assetsReady,false);assert.deepEqual(f.r.assetLoadFailures,['raccoon']);
+ fail=false;await f.r.loadVisualAssets();assert.equal(f.r.assetsReady,true);assert.deepEqual(f.r.assetLoadFailures,[]);assert.equal(f.r.wildlifeVisualRuntime.getState('raccoon').status,'ready');
 });

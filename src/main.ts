@@ -236,7 +236,11 @@ class TownGame {
   npcs = new Map<string,NpcRuntime>();
   objects = new Map<string,RuntimeObject>();
   wildlife = new Map<string,WildlifeRuntime>();
-  wildlifePresentation = new WildlifePresentation(new WildlifeVisualRuntime());
+  wildlifeVisualRuntime = new WildlifeVisualRuntime(undefined,async scene=>{
+    await prepareVisualPrograms(this.renderer,this.camera,this.scene,[scene]);
+    prepareVisualShadows(this.renderer,this.camera,this.scene,[scene]);
+  });
+  wildlifePresentation = new WildlifePresentation(this.wildlifeVisualRuntime);
   wildlifeLineage = new Map<string,WildlifeLineageRecord>();
   wildlifeTransfers = new Map<string,PersistedWildlifeTransfer>();
   lineageEpoch = 0;
@@ -795,7 +799,7 @@ class TownGame {
       [BAKING_OVEN_ASSET]:'/assets/firefly-in-the-dusk/cast-iron-stove/CastIronStove.gltf'
     };
     const assetEntries=Object.entries(defs);
-    const loaded = await Promise.allSettled(assetEntries.map(async ([key,file])=>{
+    const visualLoads=assetEntries.map(async ([key,file])=>{
       const assetUrl=file.startsWith('/')?file:`${this.assetRoot}/${file}`;
       if(file.toLowerCase().endsWith('.fbx')){
         const scene=await this.fbxLoader.loadAsync(assetUrl);
@@ -809,11 +813,16 @@ class TownGame {
         prepareVisualShadows(this.renderer,this.camera,this.scene,[gltf.scene]);
         this.assets.set(key,{scene:gltf.scene,animations:gltf.animations});
       }
-    }));
-    this.assetLoadFailures=loaded.flatMap((result,index)=>result.status==='rejected'?[assetEntries[index]![0]]:[]);
+    });
+    const assetKeys=[...assetEntries.map(([key])=>key),'raccoon'];
+    const loaded=await Promise.allSettled([...visualLoads,this.wildlifeVisualRuntime.load('raccoon').then(()=>{
+      const state=this.wildlifeVisualRuntime.getState('raccoon');
+      if(state?.status!=='ready')throw new Error(state?.reason||'raccoon asset unavailable');
+    })]);
+    this.assetLoadFailures=loaded.flatMap((result,index)=>result.status==='rejected'?[assetKeys[index]!]:[]);
     for(const target of this.visualTargets)this.applyVisualTarget(target);
     this.assetsReady=this.assetLoadFailures.length===0;
-    this.log(`视觉素材：Quaternius 已加载 ${assetEntries.length-this.assetLoadFailures.length}/${assetEntries.length}（Cube World + Ultimate Fantasy RTS + Medieval Village）`,'developer');
+    this.log(`视觉素材：Quaternius 已加载 ${assetKeys.length-this.assetLoadFailures.length}/${assetKeys.length}（Cube World + Ultimate Fantasy RTS + Medieval Village）`,'developer');
     if(this.assetLoadFailures.length)this.log(`素材加载失败：${this.assetLoadFailures.join(', ')}；对应对象保持不可见（禁止程序化 fallback）。`);
   }
 
@@ -4340,3 +4349,4 @@ class TownGame {
 }
 
 new TownGame();
+

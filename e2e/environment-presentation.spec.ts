@@ -310,3 +310,31 @@ test('visual warmup prepares the displayed shader variant before the first visib
  await info.attach('display-shader-warmup',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
  expect(result.warmed).toBeGreaterThan(0);expect(result.firstVisibleDraw).toEqual([]);expect(result.viewport).toEqual([0,0,32,32]);expect(result.scissorTest).toBe(false);
 });
+
+
+test('raccoon runtime prepares its skinned shadow variant before publishing the first instance',async({page},info)=>{
+ await page.route('**/__wildlife_preparation__',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body></body></html>'}));
+ await page.goto('/__wildlife_preparation__');
+ const result=await page.evaluate(async()=>{
+  const threeUrl='/node_modules/three/build/three.module.js',warmupUrl='/src/scene/visualPrograms.ts',runtimeUrl='/src/scene/wildlifeVisualRuntime.ts';
+  const THREE=await import(threeUrl) as typeof import('three');
+  const {prepareVisualPrograms,prepareVisualShadows}=await import(warmupUrl) as typeof import('../src/scene/visualPrograms.js');
+  const {WildlifeVisualRuntime}=await import(runtimeUrl) as typeof import('../src/scene/wildlifeVisualRuntime.js');
+  const renderer=new THREE.WebGLRenderer();renderer.setSize(32,32);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(60,1,.1,100);camera.position.set(0,1,5);camera.lookAt(0,.5,0);
+  const light=new THREE.DirectionalLight();light.position.set(2,3,4);light.castShadow=true;scene.add(light);
+  const gl=renderer.getContext(),records:string[]=[];const programLog=gl.getProgramInfoLog.bind(gl),shaderLog=gl.getShaderInfoLog.bind(gl);
+  gl.getProgramInfoLog=program=>{records.push('program');return programLog(program);};gl.getShaderInfoLog=shader=>{records.push('shader');return shaderLog(shader);};
+  let prepared=0,instance:import('three').Object3D|undefined;
+  const runtime=new WildlifeVisualRuntime(undefined,async template=>{await prepareVisualPrograms(renderer,camera,scene,[template]);prepareVisualShadows(renderer,camera,scene,[template]);prepared++;});
+  try{
+   await runtime.load('raccoon');const state=runtime.getState('raccoon');instance=runtime.createInstance('raccoon',0);
+   if(!instance)throw Error(state?.reason||'raccoon instance unavailable');
+   instance.traverse(object=>{const mesh=object as import('three').Mesh;if(mesh.isMesh){mesh.castShadow=true;mesh.receiveShadow=true;}});
+   const warmed=records.length;scene.add(instance);renderer.render(scene,camera);await runtime.load('raccoon');
+   return {status:state?.status,prepared,warmed,firstVisibleDraw:records.slice(warmed)};
+  }finally{if(instance)runtime.dispose(instance);gl.getProgramInfoLog=programLog;gl.getShaderInfoLog=shaderLog;renderer.dispose();light.shadow.dispose();}
+ });
+ await info.attach('raccoon-shader-warmup',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ expect(result.status).toBe('ready');expect(result.prepared).toBe(1);expect(result.warmed).toBeGreaterThan(0);expect(result.firstVisibleDraw).toEqual([]);
+});
