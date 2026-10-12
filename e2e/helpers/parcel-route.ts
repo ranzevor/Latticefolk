@@ -6,6 +6,9 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
 }) {
   const canvas=document.querySelector('#game canvas');
   if(!canvas||document.pointerLockElement!==canvas)throw new Error('Parcel route requires the locked game canvas');
+  const probe=(window as unknown as {nativeInputProbe?:{
+    start:(route:unknown)=>void;pulse:(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>Promise<unknown>;finish:()=>Promise<void>
+  }}).nativeInputProbe;
   const direction=key==='KeyA'?-1:1;
   const deadline=performance.now()+90_000;
   let yaw=0,held=false,detours=0,unchanged=0;
@@ -50,7 +53,7 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
     const data=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
     return new Error(`${reason}: ${JSON.stringify({phase,position:p,nearbyWildlife,history,inputSeconds:Number(data?.playerInputSeconds),clock:JSON.parse(data?.simulationClock??'null')})}`);
   };
-  let previous=read();record(previous);
+  let previous=read();record(previous);probe?.start({target:{x:targetX,z:laneZ},timeoutMs:90_000,tolerance:.005});
   try {
     while(performance.now()<deadline){
       if(document.pointerLockElement!==canvas)throw new Error('Parcel route lost pointer lock');
@@ -76,14 +79,17 @@ export async function traverseNativeParcelRoute({key,targetX,laneZ}: {
       rotate(Math.atan2(direction*dz,direction*dx));
       const pulseMs=Math.min(250,Math.hypot(dx,dz)/4.5*1000,deadline-performance.now());
       if(!(pulseMs>0))break;
-      window.dispatchEvent(new KeyboardEvent('keydown',{code:key,bubbles:true}));held=true;
-      await new Promise<void>(resolve=>setTimeout(()=>{release();resolve();},pulseMs));
+      if(probe)await probe.pulse({codes:[key],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
+      else{
+        window.dispatchEvent(new KeyboardEvent('keydown',{code:key,bubbles:true}));held=true;
+        await new Promise<void>(resolve=>setTimeout(()=>{release();resolve();},pulseMs));
+      }
       await nextFrame();
     }
     throw failure('Parcel route exceeded its bounded input budget',read());
   } finally {
     // Release in the same page turn, rather than overshooting during a CDP reply.
-    release();rotate(0);
+    release();rotate(0);await probe?.finish();
   }
 }
 

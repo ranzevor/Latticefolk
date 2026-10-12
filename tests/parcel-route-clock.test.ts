@@ -10,7 +10,7 @@ const source=fs.readFileSync(new URL('../e2e/helpers/parcel-route.ts',import.met
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function traverseNativeParcelRoute','async function traverseNativeParcelRoute')+'\ntraverseNativeParcelRoute;';
 
-async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'starved'|'at-goal'|'overshot'='none'){
+async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'starved'|'at-goal'|'overshot'='none',native=false){
   const start={x:44.60367976,z:4.26291002};let p={...start},yaw=0;
   const physics=new FinePhysicsAuthority();
   if(obstacle)physics.registerStatic({id:'prop',minX:40,maxX:40.3,minZ:4.1,maxZ:4.5});
@@ -25,6 +25,15 @@ async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'sta
     :key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):key==='wildlifeVisuals'?'[]':undefined,
     set:()=>{throw Error('diagnostics are read only');}});
   const context={...clock.context,document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}},MouseEvent:class{}};
+  let nativePulses=0,started=0,finished=0;
+  if(native){
+    Object.assign(context.performance,{timeOrigin:0});
+    Object.assign(context.window,{nativeInputProbe:{start:()=>{started++;},finish:async()=>{finished++;},pulse:async({codes,durationMs,deadlineEpochMs}:{codes:string[];durationMs:number;deadlineEpochMs:number})=>{
+      assert.ok(Number.isFinite(deadlineEpochMs));nativePulses++;
+      for(const code of codes)context.window.dispatchEvent({type:'keydown',code} as any);
+      await new Promise<void>(resolve=>context.setTimeout(()=>{for(const code of codes)context.window.dispatchEvent({type:'keyup',code} as any);resolve();},durationMs));
+    }}});
+  }
   const fn=vm.runInNewContext(callback,context) as (args:object)=>Promise<{position:{x:number;z:number};detours:number}>;
   try{
     if(prime!=='none'&&prime!=='overshot')await new Promise<void>(resolve=>clock.context.requestAnimationFrame(resolve));
@@ -54,6 +63,7 @@ async function replay(frameMs:number,obstacle=false,prime:'none'|'catch-up'|'sta
     assert.equal(clock.clock.diagnostics.pendingSeconds,0);assert.ok(clock.time-outboundAt<=90000);
     assert.ok(Math.abs(yaw)<1e-12);assert.equal(clock.clock.diagnostics.inputOverflowCount,0);
     if(obstacle)assert.equal(outbound.detours,1);
+    if(native){assert.ok(nativePulses>0);assert.equal(started,2);assert.equal(finished,2);}
   }finally{clock.finish();}
 }
 for(const frameMs of [16,500,1000,1800])test(`parcel round trip settles both key releases at ${frameMs} ms frames`,()=>replay(frameMs));
@@ -64,3 +74,5 @@ test('parcel route cannot accept its initial goal while debt remains',()=>replay
 test('parcel route keeps initial debt and issues no input when the original deadline expires',()=>replay(2500,false,'starved'));
 
 test('parcel route corrects an overshot inbound goal before reporting arrival',()=>replay(1000,false,'overshot'));
+
+test('parcel round trip uses the external native pulse driver and finishes both observations',()=>replay(1000,false,'none',true));

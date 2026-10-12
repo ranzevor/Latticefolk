@@ -3,8 +3,9 @@ import {scheduleNativePulse,type NativePulseRequest} from './native-pulse-schedu
 
 const lateWildlife='late wildlife intent cannot mutate a rematerialized entity or consume its saved cursor';
 const selected=new Set([
-  'coarse policy reply crossing a real materialize-unload transition is discarded and retry recovers',
+ 'coarse policy reply crossing a real materialize-unload transition is discarded and retry recovers',
   lateWildlife,
+  'fine NPC parcel belongs to its source chunk and survives native unload/revisit before one-shot pickup',
   'real playable scene keeps God View observer-only and uses authoritative ground',
   'ordinary walking crosses the home edge into the visible layout and preserves it through return and reload',
   'saved actors stay visible across an internal owner boundary and reload without expanding fine simulation'
