@@ -158,11 +158,13 @@ test('shader preparation failures remain asset failures and expose no unprepared
 });
 
 for(const fail of [false,true])test(`asset publication follows real shadow staging ${fail?'failure':'success'}`,async()=>{
- const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0,wildlifeRendered=0,instancedRendered=0,wheatPending=false;
+ const f=fixture();await f.r.initializePersistence();const sun=new THREE.DirectionalLight();sun.castShadow=true;f.r.scene.add(sun);let rendered=0,wildlifeRendered=0,instancedRendered=0,wheatPending=false;const compiled=new WeakSet<THREE.Scene>();
  const load=f.r.gltfLoader.loadAsync;f.r.gltfLoader.loadAsync=async(url:string)=>{const result=await load(url);if(url.includes('crops_wheatStageB'))result.scene.name='wheat-template';return result;};
  Object.assign(f.r.renderer,{shadowMap:{enabled:true,needsUpdate:false},getRenderTarget:()=>null,getActiveCubeFace:()=>0,getActiveMipmapLevel:()=>0,
   getViewport:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissor:(v:THREE.Vector4)=>v.set(0,0,800,600),getScissorTest:()=>false,
+  compile(staging:THREE.Scene){assert.notEqual(staging,f.r.scene);compiled.add(staging);return new Set();},
   setRenderTarget(){},setViewport(){},setScissor(){},setScissorTest(){},render(staging:THREE.Scene){
+   assert.equal(compiled.has(staging),true,'shadow staging must initialize its scene lights before the first render');
    assert.equal(f.r.assets.size,fail?0:rendered-Number(wheatPending));assert.equal(f.r.assetsReady,false);assert.notEqual(staging,f.r.scene);
    let instanced=false;staging.traverse(node=>{if(node instanceof THREE.InstancedMesh)instanced=true;});
    if(staging.getObjectByName('raccoon-template'))wildlifeRendered++;
