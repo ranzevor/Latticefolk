@@ -45,7 +45,7 @@ export class WildlifeVisualRuntime {
   private readonly state = new Map<string, WildlifeVisualState>();
   private readonly loader: WildlifeAssetLoader;
 
-  constructor(loader: WildlifeAssetLoader = new DefaultWildlifeAssetLoader()) {
+  constructor(loader: WildlifeAssetLoader = new DefaultWildlifeAssetLoader(), private readonly prepare: (scene: THREE.Object3D) => void | Promise<void> = () => {}) {
     this.loader = loader;
   }
 
@@ -68,7 +68,7 @@ export class WildlifeVisualRuntime {
     const entry: CachedAsset = {};
     this.cache.set(species, entry);
     this.state.set(species, { status: 'loading' });
-    entry.loading = this.loader.load(resolved.definition.asset).then(asset => {
+    entry.loading = this.loader.load(resolved.definition.asset).then(async asset => {
       const missing = REQUIRED_ACTIONS.filter(action => {
         const clipName = resolved.definition?.clips[action];
         return !clipName || asset.animations.filter(clip => clip.name === clipName).length !== 1;
@@ -76,6 +76,7 @@ export class WildlifeVisualRuntime {
       if (missing.length > 0) {
         throw new Error(`invalid wildlife clips for ${species}: ${missing.join(', ')}`);
       }
+      await this.prepare(asset.scene);
       entry.scene = asset.scene;
       entry.animations = asset.animations;
       this.state.set(species, { status: 'ready' });
@@ -157,3 +158,4 @@ export class WildlifeVisualRuntime {
     root.removeFromParent();
   }
 }
+

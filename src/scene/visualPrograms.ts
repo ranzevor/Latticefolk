@@ -40,18 +40,20 @@ export function prepareVisualShadows(renderer:ShadowRenderer,camera:THREE.Camera
     });
     staging.add(model);
   }
-  const target=new THREE.WebGLRenderTarget(1,1),previous=renderer.getRenderTarget();
+  const previous=renderer.getRenderTarget();
   const cubeFace=renderer.getActiveCubeFace(),mipLevel=renderer.getActiveMipmapLevel();
   const viewport=renderer.getViewport(new THREE.Vector4()),scissor=renderer.getScissor(new THREE.Vector4()),scissorTest=renderer.getScissorTest();
   const needsUpdate=renderer.shadowMap.needsUpdate;
   try{
-    renderer.shadowMap.needsUpdate=true;renderer.setRenderTarget(target);renderer.setScissorTest(false);
+    renderer.shadowMap.needsUpdate=true;
+    renderer.setViewport(new THREE.Vector4(0,0,1,1));renderer.setScissor(new THREE.Vector4(0,0,1,1));renderer.setScissorTest(true);
     renderer.render(staging,camera);
   }finally{
     renderer.setRenderTarget(previous,cubeFace,mipLevel);renderer.setViewport(viewport);renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);
     renderer.shadowMap.needsUpdate=needsUpdate;
     for(const shadow of shadows)shadow.dispose();
     for(const skeleton of skeletons)skeleton.dispose();
-    target.dispose();staging.clear();
+    staging.clear();
   }
 }
+

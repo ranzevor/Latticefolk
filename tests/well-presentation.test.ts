@@ -1,3 +1,5 @@
+import {WildlifeVisualRuntime} from '../src/scene/wildlifeVisualRuntime.js';
+import {resolveWildlifeAsset} from '../src/scene/wildlifeAssetResolver.js';
 import {prepareVisualPrograms,prepareVisualShadows} from '../src/scene/visualPrograms.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,7 +99,8 @@ test('real asset loading groups the well before attaching any visual clone',asyn
   const runtime=Object.assign(new Runtime(),{renderer:{shadowMap:{enabled:false},compileAsync:async(scene:THREE.Object3D)=>scene},camera:new THREE.PerspectiveCamera(),scene:new THREE.Scene(),assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[{asset:'wellAsset'}],
     fbxLoader:{loadAsync:async()=>scene},gltfLoader:{loadAsync:async()=>({scene:new THREE.Group(),animations:[]})},
     applyVisualTarget(){seen.push(mesh(this.assets.get('wellAsset').scene).geometry.groups.length);},log(){}});
-  await runtime.loadVisualAssets();assert.deepEqual(runtime.assetLoadFailures,[]);assert.deepEqual(seen,[5]);assert.equal(runtime.assetsReady,true);
+  runtime.wildlifeVisualRuntime=new WildlifeVisualRuntime({load:async()=>({scene:new THREE.Group(),animations:Object.values(resolveWildlifeAsset('raccoon').definition!.clips).map(name=>new THREE.AnimationClip(name,1,[]))})},async scene=>{await prepareVisualPrograms(runtime.renderer,runtime.camera,runtime.scene,[scene]);prepareVisualShadows(runtime.renderer,runtime.camera,runtime.scene,[scene]);});
+  await runtime.loadVisualAssets();assert.equal(runtime.wildlifeVisualRuntime.getState('raccoon')?.status,'ready');assert.deepEqual(runtime.assetLoadFailures,[]);assert.deepEqual(seen,[5]);assert.equal(runtime.assetsReady,true);
 });
 
 test('replacing and unloading well visuals preserve shared geometry, materials and the other well',()=>{
@@ -116,3 +119,4 @@ test('replacing and unloading well visuals preserve shared geometry, materials a
   assert.equal(targets[0]!.group.parent,null);assert.equal(disposed,0);assert.equal(shared.index,index);
   assert.equal(mesh(targets[1]!.group).geometry,shared);assert.equal(state.resourceAmount,7);
 });
+
