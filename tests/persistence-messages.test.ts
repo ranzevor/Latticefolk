@@ -30,19 +30,22 @@ interface Runtime {
   log(text:string,audience?:'player'|'developer'):void;
 }
 type Reply={status:number;data?:unknown};
-function fixture(locale:LocaleCode,reply:Reply,beaconAccepted=false){
+function fixture(locale:LocaleCode,reply:Reply,beaconAccepted=false,hang=false){
   const i18n=new I18n(locale),requests:Array<{url:string;init?:RequestInit}>=[],acknowledged:number[]=[],retryDelays:number[]=[],restored:unknown[]=[],beacons:Array<{url:string;body:Blob}>=[];
   const snapshot={version:1,meta:{day:0},coarseChunks:[],fineChunks:[]};
-  const fetch=async(url:string,init?:RequestInit)=>{requests.push({url,init});return{ok:reply.status>=200&&reply.status<300,status:reply.status,json:async()=>reply.data};};
+  let deadline:(()=>void)|undefined;
+  const setTimeout=(callback:()=>void)=>{deadline=callback;return 1;};
+  const clearTimeout=()=>{deadline=undefined;};
+  const fetch=async(url:string,init?:RequestInit)=>{requests.push({url,init});if(hang)await new Promise(()=>{});return{ok:reply.status>=200&&reply.status<300,status:reply.status,json:async()=>reply.data};};
   const navigator={sendBeacon:(url:string,body:Blob)=>{beacons.push({url,body});return beaconAccepted;}};
-  const RuntimeClass=new Function(...Object.keys(worldRandom),'StreamedLayoutValidationError','i18n','fetch','navigator','Blob','TextEncoder','now','appendHudLog',code)(...Object.values(worldRandom),StreamedLayoutValidationError,i18n,fetch,navigator,Blob,TextEncoder,()=>123,appendHudLog);
+  const RuntimeClass=new Function(...Object.keys(worldRandom),'StreamedLayoutValidationError','i18n','fetch','navigator','Blob','TextEncoder','now','appendHudLog','setTimeout','clearTimeout',code)(...Object.values(worldRandom),StreamedLayoutValidationError,i18n,fetch,navigator,Blob,TextEncoder,()=>123,appendHudLog,setTimeout,clearTimeout);
   const runtime:Runtime=new RuntimeClass();
   const checkpoint={pending:false,capture:()=>17,acknowledge:(value:number)=>acknowledged.push(value)};
   Object.assign(runtime,{logs:[],persistenceReady:true,persistenceRevision:5,persistenceConflict:false,
     persistenceSaveInFlight:false,persistenceSaveQueued:false,movableDirty:true,movableSaveTimer:undefined,movableSaveRetryMs:1500,
     portables:{checkpoint},flushWildlifeHabitatExposure(){},buildWorldSnapshot:()=>snapshot,buildFinalWorldSnapshot:()=>snapshot,
     initializeWorld(){},restoreWorldState:(value:unknown)=>restored.push(value),updateFineChunkMaterialization(){},scheduleMovablePersistence:(delay:number)=>retryDelays.push(delay)});
-  return{runtime,i18n,requests,acknowledged,retryDelays,restored,beacons,snapshot,checkpoint};
+  return{runtime,i18n,requests,acknowledged,retryDelays,restored,beacons,snapshot,checkpoint,expire:()=>{assert.ok(deadline);deadline();}};
 }
 const labels:Record<LocaleCode,{save:string;load:string;restored:string;newWorld:string;conflict:string;reload:string;beacon:string;invalidRevision:string;invalidAcknowledgement:string}>={
   'zh-CN':{save:'世界自动保存失败：',load:'世界存档加载失败',restored:'已恢复世界存档',newWorld:'未发现已有世界存档',conflict:'存档版本冲突',reload:'需要重新加载',beacon:'最终存档未进入浏览器发送队列',invalidRevision:'服务器返回了无效的存档版本',invalidAcknowledgement:'存档版本确认无效'},
@@ -52,6 +55,20 @@ const labels:Record<LocaleCode,{save:string;load:string;restored:string;newWorld
 };
 for(const {code:locale} of SUPPORTED_LOCALES){
   const expected=labels[locale];
+  test(`${locale}: timed-out save uses its own translated warning and retains unconfirmed edits`,async()=>{
+    const expectedTimeout:Record<LocaleCode,string>={
+      'zh-CN':'保存请求超时，未确认的改动将保留',
+      en:'Save request timed out; unacknowledged changes are retained',
+      ja:'保存要求がタイムアウトしました。未確認の変更は保持されます',
+      es:'La solicitud de guardado agotó el tiempo; se conservan los cambios sin confirmar'
+    };
+    const f=fixture(locale,{status:200},false,true);const saving=f.runtime.saveWorldState();f.expire();await saving;
+    assert.equal(f.runtime.logs[0].text,expected.save+expectedTimeout[locale]);
+    assert.equal(f.runtime.logs[0].audience,'player');assert.equal(f.runtime.persistenceRevision,5);
+    assert.equal(f.runtime.movableDirty,true);assert.equal(f.runtime.persistenceSaveInFlight,false);
+    assert.deepEqual(f.acknowledged,[]);assert.deepEqual(f.retryDelays,[1500]);
+    assert.equal(f.requests[0].init?.signal?.aborted,true);
+  });
   test(`${locale}: autosave HTTP error preserves code, retry and player warning`,async()=>{
     const f=fixture(locale,{status:503});await f.runtime.saveWorldState();
     assert.equal(f.runtime.logs[0].text,expected.save+'HTTP 503');assert.equal(f.runtime.logs[0].audience,'player');
@@ -102,7 +119,12 @@ test('every locale explicitly declares all persistence keys with identical inter
     if(!['zh','en','ja','es'].includes(declaration.name.getText(parsed))||!declaration.initializer||!ts.isObjectLiteralExpression(declaration.initializer))continue;
     const fields:Record<string,string[]>={};
     for(const property of declaration.initializer.properties)if(ts.isPropertyAssignment(property)&&ts.isStringLiteral(property.name)&&ts.isStringLiteral(property.initializer)&&property.name.text.startsWith('persistence.'))fields[property.name.text]=[...property.initializer.text.matchAll(/\{(\w+)\}/g)].map(m=>m[1]).sort();
-    assert.equal(Object.keys(fields).length,9);sets.push(fields);
+    assert.deepEqual(Object.keys(fields).sort(),[
+      'persistence.saveFailed','persistence.conflict','persistence.conflictUnknown',
+      'persistence.invalidAcknowledgement','persistence.invalidRevision','persistence.loadFailed',
+      'persistence.newWorld','persistence.requestTimedOut','persistence.restored','persistence.beaconRejected'
+    ].sort());sets.push(fields);
   }
   assert.equal(sets.length,4);for(const fields of sets)assert.deepEqual(fields,sets[0]);
 });
+

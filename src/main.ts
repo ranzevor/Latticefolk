@@ -54,6 +54,7 @@ import { registerFineTerrainForChunk, registerHomeTerrain } from './world/fineTe
 import { feedWildlifeForTaming, inheritedWildlifeDomestication, isWildlifeDomesticationEligible, normalizeWildlifeDomestication, setWildlifeBreedingPermission, setWildlifeDomesticationCommand, wildlifeBreedingAllowed, wildlifeDomesticationDecisionState, wildlifeHasActiveOwnerCommand, wildlifePairBreedingAllowed } from './world/domestication';
 import { I18n, SUPPORTED_LOCALES } from './i18n';
 import { refreshLocaleText } from './ui/runtimeLocale';
+import { startTown } from './ui/startup';
 import { appendHudLog, visibleHudLogs, type HudLogEntry, type HudLogAudience } from './ui/hudDiagnostics';
 import type {
   DecisionAction, DecisionRequest, DecisionResponse, DialogueRequest, DialogueResponse,
@@ -1311,7 +1312,10 @@ class TownGame {
       const request=(async()=>{
         const response=await fetch('/api/world/state',{signal:controller.signal});
         if(controller.signal.aborted)throw new Error('World state load aborted');
-        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        if(!response.ok){
+          controller.abort();
+          throw new Error(`HTTP ${response.status}`);
+        }
         return await response.json() as {snapshot:WorldPersistenceSnapshot|null;revision?:unknown;stats?:unknown};
       })();
       const data=await Promise.race([request,deadline]);
@@ -1493,36 +1497,44 @@ class TownGame {
         const expectedRevision=this.persistenceRevision;
         const controller=new AbortController();
         let deadline:ReturnType<typeof setTimeout>|undefined;
-        let response:Response,payload:unknown;
+        let response:Response|undefined,payload:unknown;
         try{
-          ({response,payload}=await Promise.race([
-            (async()=>{
-              const response=await fetch('/api/world/state',{
-                method:'POST',
-                headers:{'content-type':'application/json'},
-                body:JSON.stringify({snapshot,expectedRevision}),
-                signal:controller.signal
-              });
-              const payload=response.status===409
-                ?await response.json().catch(()=>({}))
-                :response.ok?await response.json():undefined;
-              return {response,payload};
-            })(),
-            new Promise<never>((_resolve,reject)=>{
-              deadline=setTimeout(()=>{
-                reject(new Error(i18n.t('persistence.requestTimedOut')));
-                controller.abort();
-              },30000);
-            })
-          ]));
+          const timeout=new Promise<never>((_resolve,reject)=>{
+            deadline=setTimeout(()=>{
+              reject(new Error(i18n.t('persistence.requestTimedOut')));
+              controller.abort();
+            },30000);
+          });
+          response=await Promise.race([
+            fetch('/api/world/state',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify({snapshot,expectedRevision}),
+              signal:controller.signal
+            }),
+            timeout
+          ]);
+          if(response.status===409||response.ok){
+            const body=response.status===409?response.json().catch(()=>({})):response.json();
+            payload=await Promise.race([body,timeout]);
+          }else{
+            // Error bodies are not consumed; release them before discarding the deadline.
+            controller.abort();
+          }
+        }catch(error){
+          if(response?.status===409){
+            this.persistenceConflict=true;
+            this.clearMovablePersistenceQueue();
+          }
+          throw error;
         }finally{
           if(deadline!==undefined)clearTimeout(deadline);
         }
         if(response.status===409){
-          const conflict=payload as {currentRevision?:unknown};
-          const currentRevision=Number(conflict.currentRevision);
           this.persistenceConflict=true;
           this.clearMovablePersistenceQueue();
+          const conflict=payload as {currentRevision?:unknown}|null|undefined;
+          const currentRevision=Number(conflict?.currentRevision);
           throw new Error(Number.isSafeInteger(currentRevision)
             ?i18n.t('persistence.conflict',{local:expectedRevision,server:currentRevision})
             :i18n.t('persistence.conflictUnknown',{local:expectedRevision}));
@@ -2440,6 +2452,28 @@ class TownGame {
     };
   }
 
+  private async postFineDecision(url:string,body:unknown):Promise<unknown> {
+    const controller=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const deadline=new Promise<never>((_,reject)=>{
+      timer=setTimeout(()=>{
+        controller.abort();
+        reject(new Error('decision request timed out'));
+      },8000);
+    });
+    const request=(async()=>{
+      const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      if(controller.signal.aborted)throw new Error('decision request aborted');
+      if(!response.ok){
+        controller.abort();
+        throw new Error('decision request failed');
+      }
+      return await response.json() as unknown;
+    })();
+    try{return await Promise.race([request,deadline]);}
+    finally{if(timer!==undefined)clearTimeout(timer);}
+  }
+
   async requestWildlifeBatch() {
     if(this.wildlifeDecisionPending)return;
     const due=[...this.wildlife.values()].filter(x=>!x.removed&&!wildlifeHasActiveOwnerCommand(x.state)&&now()>=x.nextDecisionAt)
@@ -2461,9 +2495,7 @@ class TownGame {
     }));
     const req:WildlifeDecisionBatchRequest={requests:due.map(x=>this.wildlifeSnapshot(x))};
     try{
-      const response=await fetch('/api/wildlife/decide',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
-      const out=await response.json() as WildlifeDecisionBatchResponse;
-      if(!response.ok)throw new Error('wildlife decision failed');
+      const out=await this.postFineDecision('/api/wildlife/decide',req) as WildlifeDecisionBatchResponse;
       for(const decision of out.decisions){
         const request=pending.get(decision.wildlifeId);
         if(!request)continue;
@@ -3265,8 +3297,7 @@ class TownGame {
     const world=this.snapshot(agent); const allowed=this.allowedActions(agent,world);
     const req:DecisionRequest={npc:agent.state,world,allowedActions:allowed};
     try{
-      const r=await fetch('/api/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
-      const d=await r.json() as DecisionResponse; if(!r.ok) throw new Error('decision failed');
+      const d=await this.postFineDecision('/api/decision',req) as DecisionResponse;
       // Camera-mode transitions change whether the player exists in the NPC world.
       // Never apply a result generated from an obsolete perception snapshot.
       if(agent.removed)return;
@@ -3484,6 +3515,12 @@ class TownGame {
     if(obj.state.tags.includes('mine')||obj.state.tags.includes('resource')){this.addInventory(n.inventory,'stone',2);this.event(`${n.name} 在${obj.state.name}采集了石料。`);}
     else if(obj.state.kind==='farm_plot'){this.addInventory(n.inventory,'grain',2);if(random!()<.35)this.addInventory(n.inventory,'flower',1);this.event(`${n.name} 收获了农作物。`);}
     else if(obj.state.kind==='tree'){const kind:ItemKind=obj.state.tags.includes('apple')?'apple':'wood';this.addInventory(n.inventory,kind,1);this.event(`${n.name} 从${obj.state.name}采集了${this.itemName(kind)}。`);}
+    else if(obj.state.kind==='bush'||obj.state.kind==='flower'){const kind:ItemKind=obj.state.item??'flower';this.addInventory(n.inventory,kind,1);this.event(`${n.name} 从${obj.state.name}采集了${this.itemName(kind)}。`);}
+    // The compact unload snapshot includes home entities but omits fine owners.
+    // A cross-boundary harvest must keep both transfer sides in one full save.
+    if(Boolean(obj.state.chunkId)!==Boolean(n.chunkId)){
+      this.portables.checkpoint.markFineChange();this.movableDirty=true;this.scheduleMovablePersistence();
+    }
   }
 
   npcCraft(agent:NpcRuntime,obj:RuntimeObject) {
@@ -3499,11 +3536,11 @@ class TownGame {
   }
 
   npcFetchWater(agent:NpcRuntime,obj:RuntimeObject) {
-    if(obj.state.kind!=='well')return;
+    if(obj.state.kind!=='well'&&obj.state.kind!=='water_patch')return;
     this.addInventory(agent.state.inventory,'water',1);
     agent.state.energy=clamp(agent.state.energy-1,0,100);
     this.say(agent,'带些水回去。');
-    this.event(`${agent.state.name} 从水井取了水。`);
+    this.event(`${agent.state.name} 从${obj.state.name}取了水。`);
   }
 
   npcTradeAtMarket(agent:NpcRuntime,_obj:RuntimeObject) {
@@ -3563,7 +3600,7 @@ class TownGame {
   async npcConversation(a:NpcRuntime,b:NpcRuntime,intent:SocialIntent) {
     a.state.social=clamp(a.state.social+15,0,100);b.state.social=clamp(b.state.social+9,0,100);
     const req:DialogueRequest={locale:this.locale,speaker:this.actor(a,b),listener:this.actor(b,a),situation:`${a.state.name} 主动与 ${b.state.name} 在小镇中交谈。`,intent,world:{gameTime:this.gameTimeText(),weather:this.weather,nearbyTags:this.nearbyTags(a.state.position)},recentLines:[a.state.lastDialogue,b.state.lastDialogue].filter(Boolean) as string[]};
-    try{const r=await fetch('/api/dialogue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});const d=await r.json() as DialogueResponse;if(a.removed||b.removed)return;this.say(a,d.text);a.state.lastDialogue=d.text;this.applyRelation(a,b,d.relationEffect);this.remember(a,`与${b.state.name}交谈：${d.text}`,2);this.log(`${a.state.name} 对 ${b.state.name}：${d.text} [${d.source}]`,'developer');}catch{if(!a.removed&&!b.removed)this.say(a,'嗨。');}
+    try{const d=await this.postFineDecision('/api/dialogue',req) as DialogueResponse;if(a.removed||b.removed)return;this.say(a,d.text);a.state.lastDialogue=d.text;this.applyRelation(a,b,d.relationEffect);this.remember(a,`与${b.state.name}交谈：${d.text}`,2);this.log(`${a.state.name} 对 ${b.state.name}：${d.text} [${d.source}]`,'developer');}catch{if(!a.removed&&!b.removed)this.say(a,'嗨。');}
   }
 
   actor(a:NpcRuntime,b?:NpcRuntime) {return {id:a.state.id,name:a.state.name,role:a.state.role,mood:a.state.mood,relationship:b?a.state.relationships[b.state.id]:undefined};}
@@ -3674,14 +3711,14 @@ class TownGame {
     if(this.cameraMode!=='firstPerson')return;
     const dialogueEpoch=this.perceptionEpoch;
     const req:DialogueRequest={locale:this.locale,speaker:{id:n.state.id,name:n.state.name,role:n.state.role,mood:n.state.mood,relationship:n.state.relationships.player},listener:{id:'player',name:'玩家',role:'visitor',mood:'neutral'},situation:`${n.state.name} 主动走到玩家附近并开始交谈。`,intent,world:{gameTime:this.gameTimeText(),weather:this.weather,nearbyTags:this.nearbyTags(n.state.position)},recentLines:[n.state.lastDialogue].filter(Boolean) as string[]};
-    try{const r=await fetch('/api/dialogue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});const d=await r.json() as DialogueResponse;if(n.removed||dialogueEpoch!==this.perceptionEpoch||this.cameraMode!=='firstPerson')return;this.say(n,d.text);n.state.lastDialogue=d.text;n.state.social=clamp(n.state.social+12,0,100);const rel=n.state.relationships.player??{affinity:50,trust:50,familiarity:5};const delta=d.relationEffect==='positive'?3:d.relationEffect==='negative'?-3:0;rel.affinity=clamp(rel.affinity+delta,0,100);rel.familiarity=clamp(rel.familiarity+2,0,100);n.state.relationships.player=rel;this.remember(n,`我主动和玩家交谈：${d.text}`,2);this.log(`${n.state.name} 主动对玩家：${d.text} [${d.source}]`);}catch{if(!n.removed&&dialogueEpoch===this.perceptionEpoch&&this.cameraMode==='firstPerson')this.say(n,'嗨。');}
+    try{const d=await this.postFineDecision('/api/dialogue',req) as DialogueResponse;if(n.removed||dialogueEpoch!==this.perceptionEpoch||this.cameraMode!=='firstPerson')return;this.say(n,d.text);n.state.lastDialogue=d.text;n.state.social=clamp(n.state.social+12,0,100);const rel=n.state.relationships.player??{affinity:50,trust:50,familiarity:5};const delta=d.relationEffect==='positive'?3:d.relationEffect==='negative'?-3:0;rel.affinity=clamp(rel.affinity+delta,0,100);rel.familiarity=clamp(rel.familiarity+2,0,100);n.state.relationships.player=rel;this.remember(n,`我主动和玩家交谈：${d.text}`,2);this.log(`${n.state.name} 主动对玩家：${d.text} [${d.source}]`);}catch{if(!n.removed&&dialogueEpoch===this.perceptionEpoch&&this.cameraMode==='firstPerson')this.say(n,'嗨。');}
   }
 
   async playerTalk(n:NpcRuntime) {
     if(this.cameraMode!=='firstPerson')return;
     const dialogueEpoch=this.perceptionEpoch;
     const req:DialogueRequest={locale:this.locale,speaker:{id:n.state.id,name:n.state.name,role:n.state.role,mood:n.state.mood},listener:{id:'player',name:'玩家',role:'visitor',mood:'neutral'},situation:'玩家主动走近 NPC 并开始交谈。',intent:'greet',world:{gameTime:this.gameTimeText(),weather:this.weather,nearbyTags:this.nearbyTags(n.state.position)},recentLines:[n.state.lastDialogue].filter(Boolean) as string[]};
-    try{const r=await fetch('/api/dialogue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});const d=await r.json() as DialogueResponse;if(n.removed||dialogueEpoch!==this.perceptionEpoch||this.cameraMode!=='firstPerson')return;this.say(n,d.text);n.state.lastDialogue=d.text;n.state.social=clamp(n.state.social+8,0,100);this.remember(n,`玩家来和我说话：${d.text}`,2);this.log(`${n.state.name} 对玩家：${d.text} [${d.source}]`);}catch{if(!n.removed&&dialogueEpoch===this.perceptionEpoch&&this.cameraMode==='firstPerson')this.say(n,'你好。');}
+    try{const d=await this.postFineDecision('/api/dialogue',req) as DialogueResponse;if(n.removed||dialogueEpoch!==this.perceptionEpoch||this.cameraMode!=='firstPerson')return;this.say(n,d.text);n.state.lastDialogue=d.text;n.state.social=clamp(n.state.social+8,0,100);this.remember(n,`玩家来和我说话：${d.text}`,2);this.log(`${n.state.name} 对玩家：${d.text} [${d.source}]`);}catch{if(!n.removed&&dialogueEpoch===this.perceptionEpoch&&this.cameraMode==='firstPerson')this.say(n,'你好。');}
   }
 
   playerUse(o:RuntimeObject) {
@@ -4381,6 +4418,6 @@ class TownGame {
   }
 }
 
-new TownGame();
+startTown(()=>new TownGame(),app,i18n);
 
 

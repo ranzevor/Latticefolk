@@ -26,7 +26,7 @@ import type {DecisionResponse,NpcState,WildlifeState,WorldPersistenceSnapshot} f
 // Run the production methods; presentation and external IO are the only stubs.
 const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
-const wanted=new Set(['createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
+const wanted=new Set(['postFineDecision','createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
 const members:string[]=[];
 for(const node of ast.statements)if(ts.isClassDeclaration(node)&&node.name?.text==='TownGame')for(const member of node.members)if(ts.isMethodDeclaration(member)&&wanted.has(member.name.getText(ast)))members.push(member.getText(ast));
 assert.equal(members.length,wanted.size);
@@ -248,7 +248,7 @@ for(const kind of ['saved','empty','invalid-rng','http-failure'] as const)test(`
     if(kind==='invalid-rng')Object.assign(f.io.snapshot!.meta.randomness!,{version:2});
   }
   if(kind==='http-failure')f.io.wait=Promise.resolve({ok:false,status:503});
-  await f.runtime.initializePersistence();assert.equal(f.io.timers.size,0);assert.equal(f.io.signals[0].aborted,false);assert.equal(f.runtime.persistenceReady,true);assert.equal(f.runtime.npcs.size,10);
+  await f.runtime.initializePersistence();assert.equal(f.io.timers.size,0);assert.equal(f.io.signals[0].aborted,kind==='http-failure');assert.equal(f.runtime.persistenceReady,true);assert.equal(f.runtime.npcs.size,10);
   assert.equal(f.runtime.persistenceLoadBlocked,kind==='invalid-rng'||kind==='http-failure');assert.equal(f.runtime.persistenceConflict,false);assert.equal(f.runtime.coarseWorld.worldSeed,kind==='saved'?'selected-seed':random.DEFAULT_WORLD_SEED);assert.deepEqual(f.io.requests,['/api/world/state']);
 });
 
