@@ -8,7 +8,7 @@ import * as THREE from 'three';
 const require=createRequire(new URL('../src/main.ts',import.meta.url));
 const {JSDOM}=require('jsdom');
 const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
-const code=ts.transpileModule(source.replace(/new TownGame\(\);\s*$/,'return {TownGame,ui};'),{
+const code=ts.transpileModule(source.replace(/startTown\(\(\)=>new TownGame\(\),app,i18n\);\s*$/,'return {TownGame,ui};'),{
   compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}
 }).outputText;
 const near=(actual:number,expected:number)=>assert.ok(Math.abs(actual-expected)<1e-8,`${actual} != ${expected}`);
