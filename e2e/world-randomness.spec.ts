@@ -108,7 +108,7 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     strategy:'sustain',migrationPolicy:'retain',ecologyPolicy:'balance',lastDecisionAt:0,decisionVersion:0,wildlife:[{species:'rabbit',count:1,carryingCapacity:3,health:100}]};
   const rabbit:WildlifeState={id:'rabbit_rng',chunkId:chunk.id,species:'rabbit',position:{x:44,z:5},ageDays:60,health:100,hunger:0,thirst:0,energy:100,
     sex:'male',generation:0,traits:{speed:1,size:.6,fertility:.8,wariness:.7},currentAction:'rest',lastDecisionAt:0,birthDay:1,randomEventCursor:17};
-  const seed=snapshot();seed.meta.playerPosition={x:37,z:1.2};seed.coarseChunks=[chunk];seed.fineChunks=[{chunkId:chunk.id,npcStates:[],objectStates:[],wildlifeStates:[rabbit]}];await seedWorld(request,seed);
+  const seed=snapshot();seed.meta.playerPosition={x:36.2,z:1.2};seed.coarseChunks=[chunk];seed.fineChunks=[{chunkId:chunk.id,npcStates:[],objectStates:[],wildlifeStates:[rabbit]}];await seedWorld(request,seed);
   let captured:Request|undefined,release=()=>{},handled=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;}),finished=new Promise<void>(resolve=>{handled=resolve;});
   await page.route('**/api/decision',route=>route.fulfill({json:idle}));
   await page.route('**/api/wildlife/decide',async route=>{
@@ -126,7 +126,7 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
     await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);
     await nativeCrossing(page,35.2,x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
-    await nativeCrossing(page,37.2,x=>x>36.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    await nativeCrossing(page,36.2,x=>x>35.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
     await expect.poll(()=>status(page).evaluate(el=>(JSON.parse((el as HTMLElement).dataset.streamedLayouts||'[]') as {fineOwners:string[]}[]).flatMap(unit=>unit.fineOwners))).toEqual([chunk.id]);
     await expect.poll(()=>status(page).evaluate(el=>JSON.parse((el as HTMLElement).dataset.wildlifeVisuals||'[]').some((x:{id:string})=>x.id==='rabbit_rng'))).toBe(true);
     release();await finished;const reply=await captured!.response();expect(reply?.status()).toBe(200);expect(await reply!.finished()).toBeNull();
