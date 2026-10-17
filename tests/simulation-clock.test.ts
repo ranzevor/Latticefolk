@@ -106,27 +106,27 @@ test('queue overflow preserves accepted input/time debt and inserts a bounded re
 
 
 for(const [press,release,expected] of [[2500,2800,.3],[1500,2300,.8],[4800,5100,.3]])test(`late native interval ${press}-${release} remains in unconsumed foreground debt`,()=>{
- const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(press,5200,east),true);assert.equal(f.clock.recordEvent(release,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
  f.clock.advanceFrame(5500,5501,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),expected);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
 
 test('a fully late native press and release retain their held duration after the consumed boundary',()=>{
- const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(1000,5200,east),true);
  assert.equal(f.clock.recordEvent(1200,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
  f.clock.advanceFrame(5300,5401,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.3);near(f.clock.consumedThroughMs!,5300);
 });
 
 test('a partially late native interval shifts as a unit without replaying consumed world time',()=>{
- const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(1900,5200,east),true);
  assert.equal(f.clock.recordEvent(2100,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
@@ -136,13 +136,13 @@ test('a partially late native interval shifts as a unit without replaying consum
 });
 
 test('late native release is applied once and a fresh press starts at its own timestamp',()=>{
- const f=fixture();f.frame(0);f.frame(5000);
+ const f=fixture();f.frame(0);f.frame(5000);f.steps.length=0;
  f.clock.recordEvent(1000,5200,east);f.clock.recordEvent(1200,5201,undefined);
  f.clock.recordEvent(5250,5251,east);f.clock.recordEvent(5350,5351,undefined);
  f.clock.advanceFrame(5400,5401,(seconds,input)=>f.steps.push({seconds,input}));
  f.clock.advanceFrame(5400,5402,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.3);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.4);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.4);
 });
 
 test('suspension clears the late-event offset and held input',()=>{
@@ -154,7 +154,7 @@ test('suspension clears the late-event offset and held input',()=>{
 });
 
 test('retained input insertion cannot rewind consumed time or bypass handled-time ordering',()=>{
- const f=fixture();f.frame(0);f.frame(1000);
+ const f=fixture();f.frame(0);f.frame(1000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(100,1200,east),true);assert.equal(f.clock.recordEvent(300,1201,undefined),true);f.frame(1300);
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);near(f.steps.reduce((sum,s)=>sum+s.seconds,0),1.3);
  assert.equal(f.clock.recordEvent(1200,1299,east),false);assert.equal(f.clock.diagnostics.resetReason,'invalid-time');
