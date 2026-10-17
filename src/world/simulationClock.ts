@@ -40,8 +40,6 @@ export class SimulationClock {
     if(validEvent&&this.sampledAt!==undefined&&at<this.sampledAt){
       if(this.lateEventOffset===undefined)this.lateEventOffset=this.sampledAt-at;
       at+=this.lateEventOffset;
-    }else if(this.lateEventOffset!==undefined&&validEvent){
-      at+=this.lateEventOffset;
     }
     const recorded=this.recordInput(Math.max(at,this.sampledAt??0,this.changes.at(-1)?.at??0),input,true);
     if(input===undefined)this.lateEventOffset=undefined;
