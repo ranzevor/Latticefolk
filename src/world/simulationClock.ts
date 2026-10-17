@@ -37,7 +37,6 @@ export class SimulationClock {
     if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
     const validEvent=typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt;
     let at=validEvent?eventAt!:handledAt;
-    const consumed=this.advancedThroughMs??this.sampledAt;
     if(validEvent&&this.sampledAt!==undefined&&at<this.sampledAt){
       if(this.lateEventOffset===undefined)this.lateEventOffset=this.sampledAt-at;
       at+=this.lateEventOffset;
