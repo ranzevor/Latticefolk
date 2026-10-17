@@ -5,7 +5,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import {wildlifeHasActiveOwnerCommand,normalizeWildlifeDomestication} from '../src/world/domestication.js';
 const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8'),ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
-const wanted=new Set(['requestWildlifeBatch','requestDecision','playerTalk','npcTalkPlayerAuto','npcConversation']);
+const wanted=new Set(['postFineDecision','requestWildlifeBatch','requestDecision','playerTalk','npcTalkPlayerAuto','npcConversation']);
 const methods:string[]=[];for(const n of ast.statements)if(ts.isClassDeclaration(n)&&n.name?.text==='TownGame')for(const m of n.members)if(ts.isMethodDeclaration(m)&&wanted.has(m.name.getText(ast)))methods.push(m.getText(ast));
 assert.equal(methods.length,wanted.size);
 const code=ts.transpileModule(`return class Runtime {${methods.join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;

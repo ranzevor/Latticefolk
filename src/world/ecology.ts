@@ -22,13 +22,6 @@ function smooth(previous:number,next:number,weight=.08){
 
 const NICHE_AXES=['grass','shrub','fruit','crop','prey','space'] as const;
 
-function nicheOverlap(a:WildlifeSpecies,b:WildlifeSpecies){
-  const pa=wildlifeSpeciesProfile(a).niche,pb=wildlifeSpeciesProfile(b).niche;
-  const sumA=NICHE_AXES.reduce((sum,key)=>sum+pa[key],0);
-  const sumB=NICHE_AXES.reduce((sum,key)=>sum+pb[key],0);
-  const shared=NICHE_AXES.reduce((sum,key)=>sum+Math.min(pa[key]/sumA,pb[key]/sumB),0);
-  return clamp(shared,0,1);
-}
 
 export function wildlifeDiseaseContactCoefficient(from:WildlifeSpecies,to:WildlifeSpecies){
   if(from===to)return 1;
@@ -244,12 +237,20 @@ export function computeWildlifeNicheCompetition(chunk:CoarseChunkState,populatio
   }
 
   const speciesPressure=Object.fromEntries(SPECIES.map(species=>[species,0])) as Record<WildlifeSpecies,number>;
+  const niches=SPECIES.map(species=>{
+    const niche=wildlifeSpeciesProfile(species).niche;
+    const total=NICHE_AXES.reduce((sum,key)=>sum+niche[key],0);
+    return NICHE_AXES.map(key=>niche[key]/total);
+  });
   const pairs:WildlifeCompetitionPair[]=[];
   let strongestPair:NonNullable<CoarseChunkState['nicheCompetition']>['strongestPair'];
   for(let i=0;i<SPECIES.length;i++){
     for(let j=i+1;j<SPECIES.length;j++){
       const a=SPECIES[i]!,b=SPECIES[j]!;
-      const overlap=nicheOverlap(a,b);
+      const na=niches[i]!,nb=niches[j]!;
+      let shared=0;
+      for(let axis=0;axis<NICHE_AXES.length;axis++)shared+=Math.min(na[axis]!,nb[axis]!);
+      const overlap=clamp(shared,0,1);
       if(overlap<=0)continue;
       const da=density.get(a)||0,db=density.get(b)||0;
       const pairPressure=round(clamp(overlap*((da+db)/2)*100,0,100));

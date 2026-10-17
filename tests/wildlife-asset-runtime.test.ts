@@ -330,3 +330,20 @@ test('template and clone skeleton bone textures have isolated disposal ownership
   assert.equal(templateDisposed, 0);
   assert.ok(templateSkeleton.boneTexture);
 });
+
+
+test('wildlife preparation gates publication and concurrent loads share preparation',async()=>{
+ const calls={calls:0};let release!:()=>void,entered!:()=>void,prepared=0;
+ const gate=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{entered=resolve;});
+ const runtime=new WildlifeVisualRuntime(fixtureLoader(calls),async()=>{prepared++;entered();await gate;});
+ const first=runtime.load('raccoon'),second=runtime.load('raccoon');await started;
+ assert.equal(runtime.getState('raccoon')?.status,'loading');assert.equal(runtime.createInstance('raccoon',0),undefined);
+ release();await Promise.all([first,second]);assert.equal(calls.calls,1);assert.equal(prepared,1);assert.equal(runtime.getState('raccoon')?.status,'ready');
+ const instance=runtime.createInstance('raccoon',0)!;assert.ok(instance);runtime.dispose(instance);await runtime.load('raccoon');assert.equal(prepared,1);
+});
+test('wildlife preparation failure never publishes and the next load retries',async()=>{
+ const calls={calls:0};let attempts=0;
+ const runtime=new WildlifeVisualRuntime(fixtureLoader(calls),()=>{if(++attempts===1)throw Error('preparation failed');});
+ await runtime.load('raccoon');assert.equal(runtime.getState('raccoon')?.status,'failed');assert.equal(runtime.createInstance('raccoon',0),undefined);
+ await runtime.load('raccoon');assert.equal(calls.calls,2);assert.equal(attempts,2);assert.equal(runtime.getState('raccoon')?.status,'ready');
+});

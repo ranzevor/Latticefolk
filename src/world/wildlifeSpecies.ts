@@ -1,4 +1,4 @@
-import type { ChunkBiome, WildlifeAction, WildlifeOrganismFamily, WildlifeSpecies, WorldSeason } from '../types.js';
+import type { ChunkBiome, WildlifeAction, WildlifeOrganismFamily, WildlifeSpecies, WorldSeason, WorldObjectState } from '../types.js';
 import { composeWildlifeSpeciesProfile, WILDLIFE_BODY_ARCHETYPES, WILDLIFE_CAPABILITY_ARCHETYPES, WILDLIFE_ECOLOGY_ARCHETYPES, WILDLIFE_FORM_ARCHETYPES, WILDLIFE_HABITAT_ARCHETYPES, WILDLIFE_LIFE_ARCHETYPES, WILDLIFE_MOVEMENT_ARCHETYPES } from './wildlifeArchetypes.js';
 
 export type WildlifeTrophicRole='herbivore'|'omnivore'|'predator';
@@ -343,4 +343,16 @@ export function wildlifePredationDamage(predator:WildlifeSpecies,prey:WildlifeSp
 
 export function wildlifeHungerRelief(predator:WildlifeSpecies,prey:WildlifeSpecies){
   return WILDLIFE_SPECIES_PROFILES[predator].prey[prey]?.hungerRelief||0;
+}
+
+
+export function wildlifeResourceSupportsAction(species:WildlifeSpecies,action:WildlifeAction,resource:{tags:readonly string[];kind?:WorldObjectState['kind']}){
+  if(resource.kind==='dropped_item')return false;
+  const water=resource.tags.includes('water')||resource.kind==='well'||resource.kind==='water_patch';
+  if(action==='drink')return water;
+  if((action!=='graze'&&action!=='forage')||water)return false;
+  const plant=resource.tags.some(tag=>['food','forage','grass','fruit','crop','apple','flower'].includes(tag))
+    ||resource.kind==='bush'||resource.kind==='flower';
+  return plant&&(resource.tags.some(tag=>wildlifeSpeciesProfile(species).forageTags.includes(tag))
+    ||resource.kind==='bush'||resource.kind==='flower'||resource.tags.includes('apple')||resource.tags.includes('flower'));
 }

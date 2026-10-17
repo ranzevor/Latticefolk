@@ -1,3 +1,6 @@
+import {WildlifeVisualRuntime} from '../src/scene/wildlifeVisualRuntime.js';
+import {resolveWildlifeAsset} from '../src/scene/wildlifeAssetResolver.js';
+import {prepareVisualPrograms,prepareVisualShadows} from '../src/scene/visualPrograms.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,10 +19,10 @@ const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
 const game=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='TownGame') as ts.ClassDeclaration;
 const method=(name:string)=>game.members.find(n=>n.name?.getText(ast)===name)!.getText(ast);
-const Runtime=new Function('THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows',
+const Runtime=new Function('prepareVisualPrograms','prepareVisualShadows','THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows',
   'WATER_PATCH_ASSET','BAKING_OVEN_ASSET',ts.transpileModule(`return class Runtime {objects=new Map();${[
     'streamedPresentation','loadVisualAssets','normalizeModel','pickEntity','applyVisualTarget','attachVisualTarget'].map(method).join('\n')}}`,
-  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,'waterPatch','bakingOven');
+  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(prepareVisualPrograms,prepareVisualShadows,THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,'waterPatch','bakingOven');
 
 function triangles(geometry:THREE.BufferGeometry){
   const rows:string[]=[];
@@ -93,10 +96,11 @@ test('unsupported material, animation and geometry inputs remain unmodified',()=
 
 test('real asset loading groups the well before attaching any visual clone',async()=>{
   const scene=well(),seen:number[]=[];
-  const runtime=Object.assign(new Runtime(),{assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[{asset:'wellAsset'}],
+  const runtime=Object.assign(new Runtime(),{renderer:{shadowMap:{enabled:false},compileAsync:async(scene:THREE.Object3D)=>scene},camera:new THREE.PerspectiveCamera(),scene:new THREE.Scene(),assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[{asset:'wellAsset'}],
     fbxLoader:{loadAsync:async()=>scene},gltfLoader:{loadAsync:async()=>({scene:new THREE.Group(),animations:[]})},
     applyVisualTarget(){seen.push(mesh(this.assets.get('wellAsset').scene).geometry.groups.length);},log(){}});
-  await runtime.loadVisualAssets();assert.deepEqual(runtime.assetLoadFailures,[]);assert.deepEqual(seen,[5]);assert.equal(runtime.assetsReady,true);
+  runtime.wildlifeVisualRuntime=new WildlifeVisualRuntime({load:async()=>({scene:new THREE.Group(),animations:Object.values(resolveWildlifeAsset('raccoon').definition!.clips).map(name=>new THREE.AnimationClip(name,1,[]))})},async scene=>{await prepareVisualPrograms(runtime.renderer,runtime.camera,runtime.scene,[scene]);prepareVisualShadows(runtime.renderer,runtime.camera,runtime.scene,[scene]);});
+  await runtime.loadVisualAssets();assert.equal(runtime.wildlifeVisualRuntime.getState('raccoon')?.status,'ready');assert.deepEqual(runtime.assetLoadFailures,[]);assert.deepEqual(seen,[5]);assert.equal(runtime.assetsReady,true);
 });
 
 test('replacing and unloading well visuals preserve shared geometry, materials and the other well',()=>{
@@ -114,4 +118,15 @@ test('replacing and unloading well visuals preserve shared geometry, materials a
   runtime.streamedPresentation.retainVisible(new Set());
   assert.equal(targets[0]!.group.parent,null);assert.equal(disposed,0);assert.equal(shared.index,index);
   assert.equal(mesh(targets[1]!.group).geometry,shared);assert.equal(state.resourceAmount,7);
+});
+
+
+test('asset loading prepares the instanced wheat variant before publishing readiness',async()=>{
+  const source=new THREE.Group(),geometry=new THREE.BoxGeometry(),material=new THREE.MeshStandardMaterial();
+  source.add(new THREE.Mesh(geometry,material));let preparedInstances=0,sharedDisposals=0;
+  geometry.addEventListener('dispose',()=>sharedDisposals++);material.addEventListener('dispose',()=>sharedDisposals++);
+  const runtime=Object.assign(new Runtime(),{renderer:{shadowMap:{enabled:false},compileAsync:async(root:THREE.Object3D)=>{root.traverse(node=>{if(node instanceof THREE.InstancedMesh){preparedInstances++;assert.equal(node.count,12);assert.equal(node.geometry,geometry);assert.equal(node.material,material);}});}},camera:new THREE.PerspectiveCamera(),scene:new THREE.Scene(),assets:new Map(),assetRoot:'/assets/quaternius',visualTargets:[],
+    fbxLoader:{loadAsync:async()=>new THREE.Group()},gltfLoader:{loadAsync:async(url:string)=>({scene:url.includes('crops_wheatStageB')?source:new THREE.Group(),animations:[]})},
+    wildlifeVisualRuntime:{load:async()=>{},getState:()=>({status:'ready'})},log(){}});
+  await runtime.loadVisualAssets();assert.equal(preparedInstances,1);assert.equal(runtime.assetsReady,true);assert.equal(sharedDisposals,0);assert.equal(runtime.assets.get('farmWheat').scene,source);assert.equal(source.children[0] instanceof THREE.InstancedMesh,false);
 });
