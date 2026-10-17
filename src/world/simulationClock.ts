@@ -36,12 +36,14 @@ export class SimulationClock {
   recordEvent(eventAt:number|undefined,handledAt:number,input:PlayerMovementInput|undefined):boolean {
     if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
     const validEvent=typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt;
-    let at=validEvent?eventAt!:handledAt;
+    let at=validEvent&&this.sampledAt!==undefined?eventAt!:handledAt;
     if(validEvent&&this.sampledAt!==undefined&&at<this.sampledAt){
       if(this.lateEventOffset===undefined)this.lateEventOffset=this.sampledAt-at;
       at+=this.lateEventOffset;
+    }else if(validEvent&&this.lateEventOffset!==undefined){
+      at+=this.lateEventOffset;
     }
-    const recorded=this.recordInput(Math.max(at,this.sampledAt??0,this.changes.at(-1)?.at??0),input,true);
+    const recorded=this.recordInput(Math.max(at,this.sampledAt??at,this.changes.at(-1)?.at??0),input,true);
     if(input===undefined)this.lateEventOffset=undefined;
     return recorded;
   }
@@ -84,7 +86,7 @@ export class SimulationClock {
   }
 
   private advanceTo(at:number,handledAt:number,step:(seconds:number,input:PlayerMovementInput|undefined)=>void):boolean {
-    if(!Number.isFinite(at)||at<0||!Number.isFinite(handledAt)||at>handledAt||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)||(this.changes.at(-1)?.at??0)>handledAt){
+    if(!Number.isFinite(at)||at<0||!Number.isFinite(handledAt)||at>handledAt||(this.sampledAt!==undefined&&at<this.sampledAt)||(this.lastFrameAt!==undefined&&at<this.lastFrameAt)){
       this.reset('invalid-time');return false;
     }
     if(this.sampledAt===undefined){this.sampledAt=at;this.lastFrameAt=at;this.advancedThroughMs=at;return true;}
