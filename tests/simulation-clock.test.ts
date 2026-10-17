@@ -114,6 +114,42 @@ for(const [press,release,expected] of [[2500,2800,.3],[1500,2300,.3],[4800,5100,
  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
+
+test('a fully late native press and release retain their held duration after the consumed boundary',()=>{
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ assert.equal(f.clock.recordEvent(1000,5200,east),true);
+ assert.equal(f.clock.recordEvent(1200,5201,undefined),true);
+ f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
+});
+
+test('a partially late native interval shifts as a unit without replaying consumed world time',()=>{
+ const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);
+ assert.equal(f.clock.recordEvent(1900,5200,east),true);
+ assert.equal(f.clock.recordEvent(2100,5201,undefined),true);
+ f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
+});
+
+test('late native release is applied once and a fresh press starts at its own timestamp',()=>{
+ const f=fixture();f.frame(0);f.frame(5000);
+ f.clock.recordEvent(1000,5200,east);f.clock.recordEvent(1200,5201,undefined);
+ f.clock.recordEvent(5250,5251,east);f.clock.recordEvent(5350,5351,undefined);
+ f.clock.advanceFrame(5400,5401,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.3);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.4);
+});
+
+test('suspension clears the late-event offset and held input',()=>{
+ const f=fixture();f.frame(0);f.frame(5000);
+ f.clock.recordEvent(1000,5200,east);f.clock.reset();f.frame(10000);
+ f.clock.recordEvent(10100,10100,east);f.clock.recordEvent(10200,10200,undefined);f.frame(10300);
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.1);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.3);
+});
+
 test('retained input insertion cannot rewind consumed time or bypass handled-time ordering',()=>{
  const f=fixture();f.frame(0);f.frame(1000);
  assert.equal(f.clock.recordEvent(100,1200,east),true);assert.equal(f.clock.recordEvent(300,1201,undefined),true);f.frame(1300);
