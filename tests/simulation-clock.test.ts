@@ -129,7 +129,7 @@ test('a partially late native interval shifts as a unit without replaying consum
  assert.equal(f.clock.recordEvent(1900,5200,east),true);
  assert.equal(f.clock.recordEvent(2100,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
- near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.1);
  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
 });
 
