@@ -1,0 +1,146 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { resolveWildlifeAsset } from './wildlifeAssetResolver';
+
+export type WildlifeVisualAction = 'idle' | 'walk' | 'run' | 'eat' | 'death';
+
+export interface WildlifeVisualState {
+  status: 'loading' | 'ready' | 'failed';
+  reason?: string;
+}
+
+export interface WildlifeAssetLoader {
+  load(url: string): Promise<{ scene: THREE.Object3D; animations: THREE.AnimationClip[] }>;
+}
+
+class DefaultWildlifeAssetLoader implements WildlifeAssetLoader {
+  private readonly loader = new GLTFLoader();
+  load(url: string) {
+    return this.loader.loadAsync(url).then(gltf => ({ scene: gltf.scene, animations: gltf.animations }));
+  }
+}
+
+interface CachedAsset {
+  scene?: THREE.Object3D;
+  animations?: THREE.AnimationClip[];
+  loading?: Promise<void>;
+}
+
+interface OwnedSkeleton {
+  skeletons: Set<THREE.Skeleton>;
+}
+
+interface InstanceState {
+  mixer: THREE.AnimationMixer;
+  actions: Map<string, THREE.AnimationAction>;
+  ownedSkeleton: OwnedSkeleton;
+  disposed: boolean;
+  current?: string;
+}
+
+const REQUIRED_ACTIONS: WildlifeVisualAction[] = ['idle', 'walk', 'run', 'eat', 'death'];
+
+export class WildlifeVisualRuntime {
+  private readonly cache = new Map<string, CachedAsset>();
+  private readonly instances = new Map<THREE.Object3D, InstanceState>();
+  private readonly state = new Map<string, WildlifeVisualState>();
+  private readonly loader: WildlifeAssetLoader;
+
+  constructor(loader: WildlifeAssetLoader = new DefaultWildlifeAssetLoader()) {
+    this.loader = loader;
+  }
+
+  getState(species: string) {
+    return this.state.get(species);
+  }
+
+  async load(species: string): Promise<void> {
+    const resolved = resolveWildlifeAsset(species);
+    if (!resolved.definition) {
+      this.state.set(species, { status: 'failed', reason: resolved.reason });
+      return;
+    }
+    const existing = this.cache.get(species);
+    if (existing?.loading) return existing.loading;
+    if (existing?.scene) return;
+    const entry: CachedAsset = {};
+    this.cache.set(species, entry);
+    entry.loading = this.loader.load(resolved.definition.asset).then(asset => {
+      const invalid = REQUIRED_ACTIONS.filter(action => {
+        const name = resolved.definition!.clips[action];
+        return asset.animations.filter(c => c.name === name).length !== 1;
+      });
+      if (invalid.length) throw new Error(`invalid wildlife clips: ${invalid.join(',')}`);
+      entry.scene = asset.scene;
+      entry.animations = asset.animations;
+      this.state.set(species, { status: 'ready' });
+    }).catch(e => {
+      this.cache.delete(species);
+      this.state.set(species, { status: 'failed', reason: String(e) });
+    }).finally(() => delete entry.loading);
+    return entry.loading;
+  }
+
+  createInstance(species: string, groundHeight: number, scale = 1): THREE.Object3D | undefined {
+    const asset = this.cache.get(species);
+    if (!asset?.scene || this.state.get(species)?.status !== 'ready') return undefined;
+    const root = cloneSkeleton(asset.scene);
+    root.scale.setScalar(scale);
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    root.position.y = groundHeight - box.min.y;
+
+    const skeletons = new Set<THREE.Skeleton>();
+    root.traverse(o => {
+      const mesh = o as THREE.SkinnedMesh;
+      if (mesh.isSkinnedMesh && mesh.skeleton) skeletons.add(mesh.skeleton);
+    });
+
+    const mixer = new THREE.AnimationMixer(root);
+    const actions = new Map<string, THREE.AnimationAction>();
+    const clips = resolveWildlifeAsset(species).definition!.clips;
+    for (const [key, name] of Object.entries(clips)) {
+      const clip = asset.animations!.find(c => c.name === name);
+      if (clip) actions.set(key, mixer.clipAction(clip));
+    }
+    this.instances.set(root, { mixer, actions, ownedSkeleton: { skeletons }, disposed: false });
+    return root;
+  }
+
+  play(root: THREE.Object3D, action: WildlifeVisualAction): boolean {
+    const instance = this.instances.get(root);
+    if (!instance || instance.disposed) return false;
+    const next = instance.actions.get(action);
+    if (!next) return false;
+    if (instance.current === action) return true;
+    next.reset();
+    if (action === 'death') {
+      next.setLoop(THREE.LoopOnce, 1);
+      next.clampWhenFinished = true;
+    }
+    next.play();
+    instance.current = action;
+    return true;
+  }
+
+  update(root: THREE.Object3D, delta: number) {
+    this.instances.get(root)?.mixer.update(delta);
+  }
+
+  dispose(root: THREE.Object3D) {
+    const instance = this.instances.get(root);
+    if (!instance || instance.disposed) return;
+    instance.disposed = true;
+    for (const action of instance.actions.values()) action.stop();
+    instance.mixer.stopAllAction();
+    instance.mixer.uncacheRoot(root);
+    for (const skeleton of instance.ownedSkeleton.skeletons) {
+      const boneTexture = skeleton.boneTexture;
+      if (boneTexture) boneTexture.dispose();
+      skeleton.dispose();
+    }
+    this.instances.delete(root);
+    root.removeFromParent();
+  }
+}

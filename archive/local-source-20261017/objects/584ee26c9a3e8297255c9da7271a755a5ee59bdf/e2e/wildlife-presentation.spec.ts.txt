@@ -1,0 +1,100 @@
+
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import type { WorldPersistenceSnapshot, WildlifeState } from '../src/types.js';
+import { startFirstPerson } from './helpers/native-start.js';
+import { lookForObject } from './helpers/relative-look.js';
+
+const status=(page:Page)=>page.locator('#worldStatus');
+const chunkAt=(v:number)=>Math.floor((v+12)/24);
+
+async function seedWildlife(request:APIRequestContext){
+  const old=await request.get('/api/world/state');
+  const oldBody=await old.json();
+  const deleted=await request.delete('/api/world/state');
+  expect(deleted.ok()).toBeTruthy();
+
+  const player={x:36,z:36};
+  const chunkId=`chunk_${chunkAt(player.x)}_${chunkAt(player.z)}`;
+  const base=(id:string,species:'raccoon'|'rabbit'):WildlifeState=>({
+    id,chunkId,species,
+    position:{x:species==='raccoon'?34:38,z:36},
+    ageDays:20,health:100,hunger:0,thirst:0,energy:100,sex:'male',
+    generation:1,traits:{size:.58,speed:1,fertility:1,wariness:1},
+    currentAction:'wander',lastDecisionAt:0,birthDay:0
+  });
+
+  const snapshot:WorldPersistenceSnapshot={
+    version:1,
+    meta:{day:1,minuteOfDay:495,weather:'clear',playerPosition:player,
+      playerInventory:{apple:0,bread:0,wood:0,coin:10,flower:0,grain:0,flour:0,water:0,stone:0,plank:0,tool:0}},
+    coarseChunks:[], fineChunks:[{chunkId,npcStates:[],objectStates:[],wildlifeStates:[
+      base('raccoon_e2e','raccoon'),base('rabbit_e2e','rabbit')
+    ]}], homeNpcs:[],homeObjects:[]
+  };
+  const latest=await request.get('/api/world/state');
+  const revision=(await latest.json()).revision;
+  const result=await request.post('/api/world/state',{data:{expectedRevision:revision,snapshot}});
+  expect(result.ok()).toBeTruthy();
+}
+
+function parseVisuals(text:string){
+  const value=document;
+  return value;
+}
+
+test.afterEach(async({page,request})=>{
+  await request.delete('/api/world/state');
+  await page.close();
+});
+
+test('raccoon presentation visual regression and god observer isolation',async({page,request},info)=>{
+  test.setTimeout(180_000);
+  const errors:string[]=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(()=>{localStorage.setItem('locale','en');});
+  await seedWildlife(request);
+  await page.goto('/',{waitUntil:'domcontentloaded'});
+  await startFirstPerson(page);
+
+  const before=await status(page).evaluate(el=>({
+    discovered:el.dataset.discoveredChunks,
+    materialized:el.dataset.materializedChunks
+  }));
+
+  const visuals=()=>status(page).evaluate(el=>JSON.parse(el.dataset.wildlifeVisuals||'[]'));
+  await expect.poll(async()=> (await visuals()).filter((x:any)=>x.species==='raccoon'&&x.ready).length).toBe(1);
+
+  const current=await visuals();
+  const raccoon=current.find((x:any)=>x.species==='raccoon');
+  const rabbit=current.find((x:any)=>x.species==='rabbit');
+  expect(raccoon.meshes).toBeGreaterThan(0);
+  expect(raccoon.bones).toBeGreaterThan(0);
+  expect(rabbit.meshes).toBeGreaterThan(0);
+
+  await expect.poll(async()=>Math.hypot(raccoon.position.x-36,raccoon.position.z-36)).toBeLessThan(10);
+  await lookForObject(page,'Raccoon');
+  const shot=await page.screenshot();
+  await info.attach('raccoon-close.png',{body:shot,contentType:'image/png'});
+
+  const poseBefore=raccoon.pose;
+  await page.keyboard.down('w');
+  await page.waitForTimeout(1000);
+  await page.keyboard.up('w');
+  const moved=(await visuals()).find((x:any)=>x.species==='raccoon');
+  expect(Math.hypot(moved.position.x-raccoon.position.x,moved.position.z-raccoon.position.z)).toBeGreaterThan(0);
+  expect(moved.pose).not.toEqual(poseBefore);
+  const walkShot=await page.screenshot();
+  await info.attach('raccoon-walking.png',{body:walkShot,contentType:'image/png'});
+
+  await page.keyboard.press('g');
+  await page.waitForTimeout(300);
+  await page.mouse.wheel(0,-500);
+  const after=await status(page).evaluate(el=>({
+    discovered:el.dataset.discoveredChunks,
+    materialized:el.dataset.materializedChunks
+  }));
+  expect(after).toEqual(before);
+  expect(await status(page).getAttribute('data-asset-failures')).not.toContain('raccoon');
+  expect(await status(page).getAttribute('data-wildlife-raccoon-failed')).toBe('0');
+  expect(errors).toEqual([]);
+});

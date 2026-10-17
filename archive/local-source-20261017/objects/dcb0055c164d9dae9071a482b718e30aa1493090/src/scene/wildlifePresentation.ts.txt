@@ -1,0 +1,138 @@
+import * as THREE from 'three';
+import { WildlifeVisualRuntime, type WildlifeVisualAction } from './wildlifeVisualRuntime';
+
+export interface WildlifePresentationOwner {
+  id: string;
+  species: string;
+  traits?: { size?: number };
+}
+
+export interface WildlifePresentationUpdate {
+  speed: number;
+  blocked?: boolean;
+  action?: 'graze' | 'forage' | 'rest' | 'wander' | 'hunt' | 'flee' | 'idle';
+  deltaSeconds: number;
+}
+
+export interface WildlifePresentationDiagnostics {
+  id: string;
+  status: 'pending' | 'ready' | 'failed';
+  reason?: string;
+}
+
+interface Binding {
+  owner: WildlifePresentationOwner;
+  token: object;
+  root?: THREE.Group;
+  visual?: THREE.Object3D;
+  status: 'pending' | 'ready' | 'failed';
+  reason?: string;
+  lastAction?: WildlifeVisualAction;
+}
+
+const RACCOON_REFERENCE_HEIGHT = 1.4;
+
+function scaleForTraits(size: number | undefined): number {
+  const normalized = Number.isFinite(size) ? Number(size) : 1;
+  return Math.max(0.55, Math.min(1.45, normalized * 0.72));
+}
+
+function chooseAction(input: WildlifePresentationUpdate): WildlifeVisualAction {
+  if (input.blocked || input.speed <= 0.01) {
+    return input.action === 'graze' || input.action === 'forage' ? 'eat' : 'idle';
+  }
+  return input.speed > 2 ? 'run' : 'walk';
+}
+
+export class WildlifePresentation {
+  private readonly bindings = new Map<string, Binding>();
+
+  constructor(private readonly runtime: WildlifeVisualRuntime) {}
+
+  register(owner: WildlifePresentationOwner): void {
+    const current = this.bindings.get(owner.id);
+    if (current?.owner === owner) return;
+
+    const binding: Binding = {
+      owner,
+      token: {},
+      status: 'pending',
+    };
+    this.bindings.set(owner.id, binding);
+    void this.attach(binding);
+  }
+
+  remove(id: string, owner?: WildlifePresentationOwner): boolean {
+    const binding = this.bindings.get(id);
+    if (!binding || (owner && binding.owner !== owner)) return false;
+    this.bindings.delete(id);
+    if (binding.visual) this.runtime.dispose(binding.visual);
+    binding.root?.removeFromParent();
+    return true;
+  }
+
+  update(owner: WildlifePresentationOwner, input: WildlifePresentationUpdate): boolean {
+    const binding = this.bindings.get(owner.id);
+    if (!binding || binding.owner !== owner || !binding.visual) return false;
+    const action = chooseAction(input);
+    if (binding.lastAction !== action) {
+      this.runtime.play(binding.visual, action);
+      binding.lastAction = action;
+    }
+    this.runtime.update(binding.visual, Math.max(0, input.deltaSeconds));
+    return true;
+  }
+
+  getDiagnostics(): WildlifePresentationDiagnostics[] {
+    return [...this.bindings.entries()].map(([id, binding]) => ({
+      id,
+      status: binding.status,
+      reason: binding.reason,
+    }));
+  }
+
+  getObject(id: string): THREE.Object3D | undefined {
+    return this.bindings.get(id)?.root;
+  }
+
+  private async attach(binding: Binding): Promise<void> {
+    await this.runtime.load(binding.owner.species);
+    if (this.bindings.get(binding.owner.id)?.token !== binding.token) return;
+
+    const runtimeState = this.runtime.getState(binding.owner.species);
+    if (runtimeState?.status === 'failed') {
+      binding.status = 'failed';
+      binding.reason = runtimeState.reason;
+      return;
+    }
+
+    const root = new THREE.Group();
+    root.name = `wildlife:${binding.owner.id}`;
+    const ground0 = new THREE.Group();
+    ground0.name = 'ground0';
+    const scale = binding.owner.species === 'raccoon'
+      ? scaleForTraits(binding.owner.traits?.size)
+      : 1;
+
+    const visual = this.runtime.createInstance(binding.owner.species, 0, scale);
+    if (!visual) {
+      binding.status = 'failed';
+      binding.reason = `unable to create ${binding.owner.species} visual`;
+      return;
+    }
+
+    ground0.add(visual);
+    root.add(ground0);
+    visual.traverse(object => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
+    });
+
+    binding.root = root;
+    binding.visual = visual;
+    binding.status = 'ready';
+  }
+}

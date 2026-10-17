@@ -1,0 +1,80 @@
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import type { WorldPersistenceSnapshot, WildlifeState } from '../src/types.js';
+import { startFirstPerson } from './helpers/native-start.js';
+import { lookForObject } from './helpers/relative-look.js';
+
+const status=(page:Page)=>page.locator('#worldStatus');
+
+async function seedWildlife(request:APIRequestContext){
+  const current=await request.get('/api/world/state');
+  const body=await current.json();
+  await request.delete('/api/world/state');
+
+  const chunkId='chunk_0_0';
+  const base=(id:string,species:'raccoon'|'rabbit'):WildlifeState=>({
+    id,chunkId,species,position:{x:12+(species==='rabbit'?3:0),z:12},
+    ageDays:20,health:100,hunger:0,thirst:0,energy:100,sex:'male',
+    generation:1,traits:{size:.58,speed:1,fertility:1,wariness:1},
+    currentAction:'wander',lastDecisionAt:0,birthDay:0
+  });
+
+  const snapshot:WorldPersistenceSnapshot={
+    version:1,
+    meta:{day:1,minuteOfDay:495,weather:'clear',playerPosition:{x:12,z:16},
+      playerInventory:{apple:0,bread:0,wood:0,coin:10,flower:0,grain:0,flour:0,water:0,stone:0,plank:0,tool:0}},
+    coarseChunks:[],
+    fineChunks:[{chunkId,npcStates:[],objectStates:[],wildlifeStates:[
+      base('raccoon_e2e','raccoon'),base('rabbit_e2e','rabbit')
+    ]}],
+    homeNpcs:[],homeObjects:[]
+  };
+  const latest=await request.get('/api/world/state');
+  const revision=(await latest.json()).revision;
+  const result=await request.post('/api/world/state',{data:{expectedRevision:revision,snapshot}});
+  expect(result.ok()).toBe(true);
+}
+
+test.afterEach(async({page,request})=>{
+  await page.close();
+  await request.delete('/api/world/state');
+});
+
+test('raccoon presentation is visible with old species and god view remains observational',async({page,request},info)=>{
+  test.setTimeout(180_000);
+  const errors:string[]=[];
+  page.on('pageerror',e=>errors.push(e.message));
+
+  await seedWildlife(request);
+  await page.goto('/',{waitUntil:'domcontentloaded'});
+  await startFirstPerson(page);
+
+  await expect.poll(async()=>JSON.parse(await status(page).getAttribute('data-wildlife-visuals')??'[]')
+    .some((v:{id:string;ready:boolean})=>v.id==='raccoon_e2e'&&v.ready),{timeout:60000}).toBe(true);
+
+  const visuals=await page.evaluate(()=>JSON.parse(
+    document.querySelector<HTMLElement>('#worldStatus')?.dataset.wildlifeVisuals??'[]'));
+  const raccoon=visuals.find((v:{id:string})=>v.id==='raccoon_e2e');
+  const rabbit=visuals.find((v:{id:string})=>v.id==='rabbit_e2e');
+  expect(raccoon).toBeTruthy();
+  expect(raccoon.meshes).toBeGreaterThan(0);
+  expect(raccoon.bones).toBeGreaterThan(0);
+  expect(rabbit).toBeTruthy();
+
+  await lookForObject(page,'raccoon',0,.25);
+  await page.waitForTimeout(1000);
+  await info.attach('raccoon-presentation-closeup',{body:await page.screenshot(),contentType:'image/png'});
+
+  await page.keyboard.press('KeyG');
+  await expect(status(page)).toHaveAttribute('data-camera-mode','god');
+  const before=await page.evaluate(()=>({
+    discovered:Number(document.querySelector<HTMLElement>('#worldStatus')?.dataset.discoveredChunks),
+    materialized:Number(document.querySelector<HTMLElement>('#worldStatus')?.dataset.materializedChunks)
+  }));
+  await page.waitForTimeout(1000);
+  const after=await page.evaluate(()=>({
+    discovered:Number(document.querySelector<HTMLElement>('#worldStatus')?.dataset.discoveredChunks),
+    materialized:Number(document.querySelector<HTMLElement>('#worldStatus')?.dataset.materializedChunks)
+  }));
+  expect(after).toEqual(before);
+  expect(errors).toEqual([]);
+});

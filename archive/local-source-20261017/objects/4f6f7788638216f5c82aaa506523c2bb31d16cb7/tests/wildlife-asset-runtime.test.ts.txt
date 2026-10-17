@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { WildlifeVisualRuntime } from '../src/scene/wildlifeVisualRuntime';
+
+function rigLoader() {
+  return {
+    load: async () => {
+      const scene = new THREE.Group();
+      const bone = new THREE.Bone();
+      const root = new THREE.Bone();
+      root.add(bone);
+      const skeleton = new THREE.Skeleton([root, bone]);
+      skeleton.computeBoneTexture();
+      const mesh = new THREE.SkinnedMesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+      mesh.add(root);
+      mesh.bind(skeleton);
+      scene.add(mesh);
+      const clips = ['Idle','Walk','Run','Idle_Eating','Death'].map(n =>
+        new THREE.AnimationClip(`AnimalArmature|AnimalArmature|AnimalArmature|${n}`, 1, [
+          new THREE.NumberKeyframeTrack('.position[x]', [0,1], [0,4]),
+        ])
+      );
+      return { scene, animations: clips };
+    }
+  };
+}
+
+test('owned skeleton disposal is isolated and idempotent', async () => {
+  const runtime = new WildlifeVisualRuntime(rigLoader());
+  await runtime.load('raccoon');
+  const a = runtime.createInstance('raccoon', 0)!;
+  const b = runtime.createInstance('raccoon', 0)!;
+  assert.ok(a && b);
+  runtime.play(a, 'walk');
+  runtime.play(b, 'walk');
+  runtime.dispose(a);
+  assert.equal(runtime.play(a, 'walk'), false);
+  runtime.update(b, .25);
+  assert.notEqual(b.position.x, 0);
+  runtime.dispose(a);
+  runtime.dispose(b);
+});

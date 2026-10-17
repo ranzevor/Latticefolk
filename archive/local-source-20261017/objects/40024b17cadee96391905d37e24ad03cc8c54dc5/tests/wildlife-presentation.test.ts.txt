@@ -1,0 +1,73 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { sourceGltf } from './helpers/source-gltf';
+import { WildlifeVisualRuntime } from '../src/scene/wildlifeVisualRuntime';
+import { WildlifePresentation } from '../src/scene/wildlifePresentation';
+
+const raccoonClip = (name: string) =>
+  `AnimalArmature|AnimalArmature|AnimalArmature|${name}`;
+
+test('real glb wiring owner lifecycle and animation continuity', async () => {
+  const source = await sourceGltf('quaternius/wildlife/Raccoon.glb');
+  let resolveLoad!: (value: {scene: THREE.Object3D; animations: THREE.AnimationClip[]}) => void;
+  const loader = { load: () => new Promise(resolve => { resolveLoad = resolve; }) };
+  const runtime = new WildlifeVisualRuntime(loader);
+  const presentation = new WildlifePresentation(runtime);
+
+  const makeOwner = (id: string) => ({
+    state: { id, species: 'raccoon' as const, traits: { size: .58 } },
+    mesh: new THREE.Group(),
+  });
+
+  const oldOwner = makeOwner('r1');
+  const newOwner = makeOwner('r1');
+  presentation.register(oldOwner);
+  presentation.register(newOwner);
+  resolveLoad({scene: source.scene, animations: source.animations});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(presentation.update(oldOwner, {speed: 3, deltaSeconds: .1}), false);
+  assert.equal(presentation.update(newOwner, {speed: 3, deltaSeconds: .1}), true);
+  assert.equal(presentation.remove(oldOwner), false);
+  assert.equal(presentation.remove(newOwner), true);
+});
+
+test('same owner, sibling isolation and non raccoon skip', async () => {
+  const source = await sourceGltf('quaternius/wildlife/Raccoon.glb');
+  const runtime = new WildlifeVisualRuntime({
+    load: async () => ({scene: source.scene, animations: source.animations})
+  });
+  const presentation = new WildlifePresentation(runtime);
+  const owner = {
+    state: {id:'r', species:'raccoon' as const, traits:{size:.58}},
+    mesh:new THREE.Group()
+  };
+  const rabbit = {
+    state: {id:'rabbit', species:'rabbit' as const, traits:{size:1}},
+    mesh:new THREE.Group()
+  };
+  presentation.register(owner);
+  presentation.register(owner);
+  presentation.register(rabbit);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(presentation.getDiagnostics().length, 1);
+  assert.equal(presentation.update(owner,{speed:0,action:'forage',deltaSeconds:.1}),true);
+  assert.equal(owner.mesh.children.length,1);
+});
+
+test('failed asset stores reason without retry', async () => {
+  let calls = 0;
+  const runtime = new WildlifeVisualRuntime({
+    load: async () => { calls++; throw new Error('bad asset'); }
+  });
+  const presentation = new WildlifePresentation(runtime);
+  const owner = {
+    state:{id:'r',species:'raccoon' as const,traits:{size:.58}},
+    mesh:new THREE.Group()
+  };
+  presentation.register(owner);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls,1);
+  assert.match(presentation.getDiagnostics()[0].reason ?? '', /bad asset/);
+});

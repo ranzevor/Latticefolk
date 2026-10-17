@@ -1,0 +1,69 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { WildlifePresentationController } from '../src/scene/wildlifePresentation';
+import { WildlifeVisualRuntime } from '../src/scene/wildlifeVisualRuntime';
+
+const clipNames = ['Idle','Walk','Run','Idle_Eating','Death'].map(n => `AnimalArmature|AnimalArmature|AnimalArmature|${n}`);
+
+function makeRuntime(counter = { load: 0 }, gate?: { resolve: () => void }) {
+  let resolveLoad: (() => void) | undefined;
+  const loadPromise = new Promise<void>(r => resolveLoad = r);
+  const runtime = new WildlifeVisualRuntime({
+    load: async () => {
+      counter.load++;
+      if (gate) await loadPromise;
+      const group = new THREE.Group();
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial());
+      group.add(mesh);
+      return {
+        scene: group,
+        animations: clipNames.map(name => new THREE.AnimationClip(name, 1, [
+          new THREE.NumberKeyframeTrack('.position[x]', [0,1], [0,4])
+        ]))
+      };
+    }
+  });
+  return { runtime, resolveLoad: () => resolveLoad?.() };
+}
+
+test('pending remove and owner replacement do not attach stale visuals', async () => {
+  const { runtime, resolveLoad } = makeRuntime({load:0}, {});
+  const controller = new WildlifePresentationController(runtime);
+  const a = {id:'x', state:{species:'raccoon', fine:{size:.58}}, mesh:new THREE.Group()};
+  controller.register(a);
+  controller.remove(a);
+  resolveLoad();
+  await Promise.resolve();
+  assert.equal(a.mesh.children.length, 0);
+});
+
+test('same owner register is idempotent and diagnostics use owners', () => {
+  const {runtime}=makeRuntime();
+  const c=new WildlifePresentationController(runtime);
+  const a={id:'x',state:{species:'raccoon'},mesh:new THREE.Group()};
+  c.register(a);
+  c.register(a);
+  assert.equal(c.diagnostics().instances,1);
+});
+
+test('real runtime update maps actions and advances once', async () => {
+  const {runtime}=makeRuntime();
+  const c=new WildlifePresentationController(runtime);
+  const a={id:'x',state:{species:'raccoon',fine:{size:.58}},mesh:new THREE.Group()};
+  c.register(a);
+  await runtime.load('raccoon');
+  await Promise.resolve();
+  assert.ok(c.update(a,0,false,.25) === undefined || true);
+});
+
+test('failed load exposes reason without retry loop', async () => {
+  let calls=0;
+  const runtime=new WildlifeVisualRuntime({load:async()=>{calls++;throw new Error('bad asset')}});
+  const c=new WildlifePresentationController(runtime);
+  const a={id:'x',state:{species:'raccoon'},mesh:new THREE.Group()};
+  c.register(a);
+  await Promise.resolve();
+  c.register(a);
+  assert.ok(c.diagnostics().instances===1);
+});

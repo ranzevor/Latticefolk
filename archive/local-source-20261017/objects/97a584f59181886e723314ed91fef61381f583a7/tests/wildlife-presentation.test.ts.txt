@@ -1,0 +1,99 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { WildlifeVisualRuntime } from '../src/scene/wildlifeVisualRuntime';
+import { WildlifePresentation } from '../src/scene/wildlifePresentation';
+
+const clip = (name: string) =>
+  `AnimalArmature|AnimalArmature|AnimalArmature|${name}`;
+
+function loader() {
+  return {
+    load: async () => {
+      const scene = new THREE.Group();
+      const bone = new THREE.Bone();
+      const skeleton = new THREE.Skeleton([bone]);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+        -1, 0, -1, 1, 1.4, 1
+      ], 3));
+      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([0,0,0,0,0,0], 3));
+      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([1,1,1,1,1,1], 3));
+      const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial());
+      mesh.add(bone);
+      mesh.bind(skeleton);
+      scene.add(mesh);
+      return {
+        scene,
+        animations: ['Idle','Walk','Run','Idle_Eating','Death'].map(name =>
+          new THREE.AnimationClip(clip(name), 1, [
+            new THREE.NumberKeyframeTrack('.position[x]', [0,1], [0,1])
+          ])
+        )
+      };
+    }
+  };
+}
+
+test('owner identity prevents stale async replacement and supports idempotent register', async () => {
+  const presentation = new WildlifePresentation(new WildlifeVisualRuntime(loader()));
+  const first = { id: 'r1', species: 'raccoon', traits: { size: 1 } };
+  const second = { id: 'r1', species: 'raccoon', traits: { size: 1.1 } };
+
+  presentation.register(first);
+  presentation.register(first);
+  presentation.register(second);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(presentation.getDiagnostics()[0].id, 'r1');
+  assert.equal(presentation.update(first, { speed: 3, deltaSeconds: .1 }), false);
+  assert.equal(presentation.update(second, { speed: 3, deltaSeconds: .1 }), true);
+});
+
+test('actions, grounding wrapper, shadows and sibling isolation', async () => {
+  const runtime = new WildlifeVisualRuntime(loader());
+  const presentation = new WildlifePresentation(runtime);
+  const owner = { id: 'r1', species: 'raccoon', traits: { size: 1 } };
+  const sibling = { id: 'r2', species: 'raccoon', traits: { size: 1 } };
+  presentation.register(owner);
+  presentation.register(sibling);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const object = presentation.getObject('r1')!;
+  assert.equal(object.children[0].name, 'ground0');
+  const visual = object.children[0].children[0];
+  const box = new THREE.Box3().setFromObject(visual);
+  assert.ok(box.getSize(new THREE.Vector3()).y < 2);
+  visual.traverse(child => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh) assert.equal(mesh.castShadow, true);
+  });
+
+  assert.equal(presentation.update(owner, {
+    speed: 0, action: 'forage', deltaSeconds: .1
+  }), true);
+  assert.equal(presentation.update(owner, {
+    speed: 0, action: 'forage', deltaSeconds: .1
+  }), true);
+  assert.equal(presentation.update(sibling, {
+    speed: 4, deltaSeconds: .1
+  }), true);
+});
+
+test('failed load records reason and does not retry', async () => {
+  let calls = 0;
+  const runtime = new WildlifeVisualRuntime({
+    load: async () => {
+      calls++;
+      throw new Error('bad asset');
+    }
+  });
+  const presentation = new WildlifePresentation(runtime);
+  const owner = { id: 'r1', species: 'raccoon' };
+  presentation.register(owner);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(presentation.getDiagnostics()[0].status, 'failed');
+  assert.match(presentation.getDiagnostics()[0].reason ?? '', /bad asset/);
+  presentation.register(owner);
+  assert.equal(calls, 1);
+});
