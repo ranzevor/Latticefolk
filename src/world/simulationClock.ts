@@ -22,11 +22,12 @@ export class SimulationClock {
   private lastAnimationAt?:number;
   private input?:PlayerMovementInput;
   private changes:InputChange[]=[];
+  private lateEventOffset?:number;
   readonly diagnostics={elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,inputOverflowCount:0,resetReason:'none' as ResetReason};
 
   reset(reason:ResetReason='suspended') {
     this.sampledAt=undefined;this.advancedThroughMs=undefined;this.lastFrameAt=undefined;this.lastAnimationAt=undefined;
-    this.clearInput();
+    this.clearInput();this.lateEventOffset=undefined;
     Object.assign(this.diagnostics,{elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,resetReason:reason});
   }
 
@@ -34,8 +35,18 @@ export class SimulationClock {
 
   recordEvent(eventAt:number|undefined,handledAt:number,input:PlayerMovementInput|undefined):boolean {
     if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
-    const at=this.sampledAt!==undefined&&typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt?eventAt:handledAt;
-    return this.recordInput(Math.max(at,this.sampledAt??0,this.changes.at(-1)?.at??0),input,true);
+    const validEvent=typeof eventAt==='number'&&Number.isFinite(eventAt)&&eventAt>=0&&eventAt<=handledAt;
+    let at=validEvent?eventAt!:handledAt;
+    const consumed=this.advancedThroughMs??this.sampledAt;
+    if(validEvent&&this.sampledAt!==undefined&&at<this.sampledAt){
+      if(this.lateEventOffset===undefined)this.lateEventOffset=this.sampledAt-at;
+      at+=this.lateEventOffset;
+    }else if(this.lateEventOffset!==undefined&&validEvent){
+      at+=this.lateEventOffset;
+    }
+    const recorded=this.recordInput(Math.max(at,this.sampledAt??0,this.changes.at(-1)?.at??0),input,true);
+    if(input===undefined)this.lateEventOffset=undefined;
+    return recorded;
   }
 
   record(at:number,input:PlayerMovementInput|undefined):boolean {
