@@ -1,0 +1,121 @@
+import * as THREE from 'three';
+import { WildlifeVisualRuntime, type WildlifeVisualAction } from './wildlifeVisualRuntime';
+
+export type WildlifePresentationAction = Extract<WildlifeVisualAction, 'idle' | 'walk' | 'run' | 'eat'>;
+
+export interface WildlifePresentationSource {
+  id: string;
+  state: { species: string; fine?: { size?: number }; [key: string]: unknown };
+  mesh: THREE.Group;
+}
+
+interface Entry {
+  owner: WildlifePresentationSource;
+  token: object;
+  removed: boolean;
+  visual?: THREE.Object3D;
+  state: 'loading' | 'ready' | 'failed';
+  reason?: string;
+  attach?: Promise<void>;
+}
+
+export interface WildlifePresentationDiagnostics {
+  loading: number;
+  ready: number;
+  failed: number;
+  instances: number;
+}
+
+export class WildlifePresentationController {
+  private readonly runtime: WildlifeVisualRuntime;
+  private readonly entries = new Map<string, Entry>();
+
+  constructor(runtime: WildlifeVisualRuntime) {
+    this.runtime = runtime;
+  }
+
+  register(owner: WildlifePresentationSource): Entry {
+    const existing = this.entries.get(owner.id);
+    if (existing?.owner === owner && !existing.removed) return existing;
+
+    if (existing) this.remove(existing.owner);
+
+    const entry: Entry = {
+      owner,
+      token: {},
+      removed: false,
+      state: owner.state.species === 'raccoon' ? 'loading' : 'ready',
+    };
+    this.entries.set(owner.id, entry);
+
+    if (owner.state.species !== 'raccoon') return entry;
+
+    const token = entry.token;
+    entry.attach = this.runtime.load('raccoon').then(() => {
+      const current = this.entries.get(owner.id);
+      if (!current || current.token !== token || current.removed || current.owner !== owner) return;
+      if (this.runtime.getState('raccoon')?.status !== 'ready') {
+        current.state = 'failed';
+        current.reason = this.runtime.getState('raccoon')?.reason ?? 'raccoon load failed';
+        return;
+      }
+
+      const scale = Number(owner.state.fine?.size ?? 1) / 0.58;
+      const visual = this.runtime.createInstance('raccoon', 0, scale);
+      if (!visual) {
+        current.state = 'failed';
+        current.reason = 'visual instance unavailable';
+        return;
+      }
+
+      visual.traverse(child => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+        }
+      });
+
+      current.visual = visual;
+      owner.mesh.add(visual);
+      current.state = 'ready';
+    }).catch(error => {
+      const current = this.entries.get(owner.id);
+      if (!current || current.token !== token) return;
+      current.state = 'failed';
+      current.reason = error instanceof Error ? error.message : String(error);
+    });
+
+    return entry;
+  }
+
+  remove(owner: WildlifePresentationSource): void {
+    const current = this.entries.get(owner.id);
+    if (!current || current.owner !== owner) return;
+    current.removed = true;
+    if (current.visual) this.runtime.dispose(current.visual);
+    this.entries.delete(owner.id);
+  }
+
+  update(owner: WildlifePresentationSource, speed: number, eating: boolean, delta: number): WildlifePresentationAction | undefined {
+    const entry = this.entries.get(owner.id);
+    if (!entry || entry.owner !== owner || entry.removed || !entry.visual || entry.state !== 'ready') return undefined;
+
+    const action: WildlifePresentationAction = eating ? 'eat' : speed > 0.75 ? 'run' : speed > 0.01 ? 'walk' : 'idle';
+    this.runtime.play(entry.visual, action);
+    this.runtime.update(entry.visual, delta);
+    return action;
+  }
+
+  diagnostics(): WildlifePresentationDiagnostics {
+    let loading = 0;
+    let ready = 0;
+    let failed = 0;
+    for (const entry of this.entries.values()) {
+      if (entry.state === 'loading') loading++;
+      if (entry.state === 'ready') ready++;
+      if (entry.state === 'failed') failed++;
+    }
+    return { loading, ready, failed, instances: this.entries.size };
+  }
+}

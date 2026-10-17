@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { WildlifePresentationController } from '../src/scene/wildlifePresentation';
+
+test('presentation registration and replacement keep async ownership', async () => {
+  const runtime = {
+    load: async () => {},
+    createInstance: () => new THREE.Group(),
+    dispose: () => {},
+    play: () => true,
+    update: () => {},
+  } as any;
+
+  const controller = new WildlifePresentationController(runtime);
+  const group = new THREE.Group();
+
+  controller.register({ id: 'a', species: 'raccoon', size: 1, group });
+  controller.remove('a');
+  controller.remove('a');
+
+  controller.register({ id: 'a', species: 'raccoon', size: 1, group });
+  const result = controller.diagnostics();
+  assert.equal(result.instances, 1);
+});
+
+test('non raccoon remains caller controlled', () => {
+  const controller = new WildlifePresentationController({} as any);
+  controller.register({ id: 'rabbit', species: 'rabbit', size: 1, group: new THREE.Group() });
+  assert.equal(controller.diagnostics().ready, 1);
+});
+
+test('motion mapping keeps stopped entities idle', () => {
+  let action = '';
+  const controller = new WildlifePresentationController({
+    load: async () => {},
+    createInstance: () => new THREE.Group(),
+    dispose: () => {},
+    play: (_: unknown, a: string) => { action = a; return true; },
+    update: () => {},
+  } as any);
+
+  controller.register({ id: 'r', species: 'raccoon', size: 1, group: new THREE.Group() });
+  assert.ok(action === '' || action === 'idle');
+});

@@ -1,0 +1,105 @@
+import * as THREE from 'three';
+import { WildlifeVisualRuntime, type WildlifeVisualAction } from './wildlifeVisualRuntime';
+
+export type WildlifePresentationMotion = 'idle' | 'walk' | 'run' | 'eat';
+
+export interface WildlifePresentationEntity {
+  id: string;
+  species: string;
+  size: number;
+  group: THREE.Group;
+}
+
+export interface WildlifePresentationDiagnostics {
+  loading: number;
+  ready: number;
+  failed: number;
+  instances: number;
+}
+
+interface Entry {
+  token: object;
+  entity: WildlifePresentationEntity;
+  removed: boolean;
+  visual?: THREE.Object3D;
+  state: 'loading' | 'ready' | 'failed';
+  error?: string;
+  attach?: Promise<void>;
+}
+
+export class WildlifePresentationController {
+  private readonly entries = new Map<string, Entry>();
+  private readonly runtime: WildlifeVisualRuntime;
+
+  constructor(runtime: WildlifeVisualRuntime) {
+    this.runtime = runtime;
+  }
+
+  register(entity: WildlifePresentationEntity): void {
+    this.remove(entity.id);
+    const entry: Entry = {
+      token: {},
+      entity,
+      removed: false,
+      state: 'loading',
+    };
+    this.entries.set(entity.id, entry);
+
+    if (entity.species !== 'raccoon') {
+      entry.state = 'ready';
+      return;
+    }
+
+    const token = entry.token;
+    entry.attach = this.runtime.load(entity.species).then(() => {
+      const current = this.entries.get(entity.id);
+      if (!current || current.token !== token || current.removed) return;
+      const visual = this.runtime.createInstance(entity.species, 0, entity.size);
+      if (!visual) {
+        current.state = 'failed';
+        current.error = 'visual instance unavailable';
+        return;
+      }
+      current.visual = visual;
+      current.entity.group.add(visual);
+      current.state = 'ready';
+    }).catch(error => {
+      const current = this.entries.get(entity.id);
+      if (!current || current.token !== token) return;
+      current.state = 'failed';
+      current.error = error instanceof Error ? error.message : String(error);
+    });
+  }
+
+  remove(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    entry.removed = true;
+    if (entry.visual) {
+      this.runtime.dispose(entry.visual);
+    }
+    this.entries.delete(id);
+  }
+
+  update(id: string, speed: number, eating: boolean, delta: number): WildlifePresentationMotion | undefined {
+    const entry = this.entries.get(id);
+    if (!entry || entry.removed || !entry.visual || entry.state !== 'ready') return undefined;
+
+    const action: WildlifeVisualAction = eating ? 'eat' : speed > 0.75 ? 'run' : speed > 0.01 ? 'walk' : 'idle';
+    this.runtime.play(entry.visual, action);
+    this.runtime.update(entry.visual, delta);
+    return action;
+  }
+
+  diagnostics(): WildlifePresentationDiagnostics {
+    let loading = 0;
+    let ready = 0;
+    let failed = 0;
+    for (const entry of this.entries.values()) {
+      if (entry.state === 'loading') loading++;
+      if (entry.state === 'ready') ready++;
+      if (entry.state === 'failed') failed++;
+    }
+    return { loading, ready, failed, instances: this.entries.size };
+  }
+}

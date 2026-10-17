@@ -1,0 +1,36 @@
+import * as THREE from 'three';
+import { CoarseWorldRuntime } from '../src/world/coarseWorld.js';
+import { planFineChunk } from '../src/world/materialization.js';
+
+const runtime = new CoarseWorldRuntime(new THREE.Scene());
+
+for(let cz=-8; cz<=8; cz++){
+  for(let cx=-8; cx<=8; cx++){
+    const chunk = runtime.ensureChunk(cx, cz);
+    if(!chunk) continue;
+
+    const plan = planFineChunk(chunk, runtime.chunkSize);
+
+    if(
+      chunk.settlementLevel===0 &&
+      plan.archetype==='wilderness' &&
+      plan.residents.length===0 &&
+      plan.buildings.length===0 &&
+      plan.roads.length===0
+    ){
+      console.log(JSON.stringify({
+        chunkId: chunk.id,
+        cx,
+        cz,
+        archetype: plan.archetype,
+        residents: plan.residents.length,
+        buildings: plan.buildings.length,
+        roads: plan.roads.length,
+        wildlife: plan.wildlife.length
+      }));
+      process.exit(0);
+    }
+  }
+}
+
+process.exit(1);
