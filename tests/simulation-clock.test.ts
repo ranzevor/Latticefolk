@@ -120,6 +120,7 @@ test('a fully late native press and release retain their held duration after the
  assert.equal(f.clock.recordEvent(1000,5200,east),true);
  assert.equal(f.clock.recordEvent(1200,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ f.clock.advanceFrame(5300,5401,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
 });
@@ -129,6 +130,7 @@ test('a partially late native interval shifts as a unit without replaying consum
  assert.equal(f.clock.recordEvent(1900,5200,east),true);
  assert.equal(f.clock.recordEvent(2100,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ f.clock.advanceFrame(5300,5401,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.1);
  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
 });
@@ -138,6 +140,7 @@ test('late native release is applied once and a fresh press starts at its own ti
  f.clock.recordEvent(1000,5200,east);f.clock.recordEvent(1200,5201,undefined);
  f.clock.recordEvent(5250,5251,east);f.clock.recordEvent(5350,5351,undefined);
  f.clock.advanceFrame(5400,5401,(seconds,input)=>f.steps.push({seconds,input}));
+ f.clock.advanceFrame(5400,5402,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.3);
  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.4);
 });
