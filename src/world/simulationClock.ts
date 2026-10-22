@@ -31,7 +31,7 @@ export class SimulationClock {
     Object.assign(this.diagnostics,{elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,resetReason:reason});
   }
 
-  clearInput(){this.input=undefined;this.changes=[];}
+  clearInput(){this.input=undefined;this.changes=[];this.lateEventOffset=undefined;}
 
   recordEvent(eventAt:number|undefined,handledAt:number,input:PlayerMovementInput|undefined):boolean {
     if(!Number.isFinite(handledAt)||handledAt<0||handledAt<(this.lastFrameAt??0))return this.record(handledAt,input);
