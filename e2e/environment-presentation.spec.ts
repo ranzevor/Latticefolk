@@ -4,6 +4,7 @@ import type { StaticCollider,PhysicsTrigger } from '../src/world/finePhysics.js'
 import { startFirstPerson } from './helpers/native-start.js';
 import { lookForObject } from './helpers/relative-look.js';
 import { waitForPlayerZBelow } from './helpers/frame-position.js';
+import { observeReleasedPlayerFrame } from './helpers/released-player-frame.js';
 
 interface TreeView {id:string;height:number;position:{x:number;z:number};collider:StaticCollider;trigger:PhysicsTrigger;}
 interface SoleView {id:string;animation:string;vertices:number;ground:number;sole:number;position:{x:number;z:number};}
@@ -123,6 +124,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   for(const actor of decisionPaused){expect(actor.vertices).toBeGreaterThan(0);expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);}
   await page.keyboard.press('Tab');await page.locator('#pauseBtn').press('Enter');await page.keyboard.press('Tab');
   await expect.poll(async()=>(await soles(page)).some(a=>a.animation==='Walk'||a.animation==='Run'),{timeout:30_000}).toBe(true);
+  const movingFraming=await frameActor();
+  const movingContext=await page.screenshot();
   const frames=await page.evaluate(async()=>{
     const samples:unknown[]=[];
     for(let frame=0;frame<48;frame++){
@@ -133,9 +136,8 @@ test('rendered NPC soles remain supported through ordinary idle and moving simul
   });
   expect(frames.flat().some(a=>a.animation==='Walk'||a.animation==='Run')).toBe(true);
   for(const actor of frames.flat())expect(Math.abs(actor.sole-actor.ground)).toBeLessThan(.001);
-  const movingFraming=await frameActor();
   await info.attach('npc-current-skin-support-samples',{body:Buffer.from(JSON.stringify({decisionPaused,frames,pausedFraming,movingFraming},null,2)),contentType:'application/json'});
-  await info.attach('npc-moving-pose-context',{body:await page.screenshot(),contentType:'image/png'});
+  await info.attach('npc-moving-pose-context',{body:movingContext,contentType:'image/png'});
 });
 
 test('native approach respects source head clearance while dialogue and observer shadows remain usable',async({page,request},info)=>{
@@ -177,6 +179,8 @@ test('native approach respects source head clearance while dialogue and observer
     await waitForPlayerZBelow(page,actor.position.z+separation+.25,20_000);
     await page.waitForTimeout(500);
   }finally{await page.keyboard.up('KeyW');}
+  const releasedFrame=await page.evaluate(observeReleasedPlayerFrame,20_000);
+  await info.attach('npc-released-input-frame',{body:Buffer.from(JSON.stringify(releasedFrame)),contentType:'application/json'});
   const contacted=await readView(),contact=contacted.player;
   expect(contact.x).toBeCloseTo(-9,3);
   expect(contact.z-actor.position.z).toBeGreaterThanOrEqual(separation-.0001);
@@ -281,3 +285,75 @@ test('bounded NPC conversation reaches the stationary player without getting stu
   await info.attach('npc-autonomous-approach-save',{body:Buffer.from(JSON.stringify({view,distance,utterance,revision:accepted.revision,npc:accepted.snapshot.homeNpcs?.find(n=>n.id==='ren')},null,2)),contentType:'application/json'});
   expect(errors).toEqual([]);
 });
+
+
+test('sourced NPC clone unload returns GPU allocations while the shared actor stays visible',async({page},testInfo)=>{
+ await page.route('**/__skeleton_lifetime.html',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body style="margin:0"><script type="module" src="/e2e/fixtures/owned-skeleton-lifetime.ts"></script></body></html>'}));
+ await page.goto('/__skeleton_lifetime.html');
+ const result=await page.evaluate(async()=>await (window as unknown as {skeletonLifetime:Promise<{coarse:ReturnType<typeof import('./fixtures/coarse-resource-lifetime.js').measureCoarseResourceLifetime>;baseline:{geometries:number;textures:number};cycles:Array<{allocated:{geometries:number;textures:number};released:{geometries:number;textures:number}}>;meshCycles:Array<{allocated:{geometries:number;textures:number};released:{geometries:number;textures:number}}>;control:{allocated:{geometries:number;textures:number};detached:{geometries:number;textures:number};disposed:{geometries:number;textures:number}};final:{geometries:number;textures:number};owned:number;triangles:number;pixelsIdentical:boolean}>}).skeletonLifetime);
+ expect(result.owned).toBeGreaterThan(0);expect(result.triangles).toBeGreaterThan(0);expect(result.cycles).toHaveLength(8);
+ for(const cycle of result.cycles){expect(cycle.allocated.textures).toBeGreaterThan(result.baseline.textures);expect(cycle.released).toEqual(result.baseline);}
+ expect(result.meshCycles).toHaveLength(8);for(const cycle of result.meshCycles){expect(cycle.allocated.geometries).toBeGreaterThan(result.baseline.geometries);expect(cycle.released).toEqual(result.baseline);}
+ expect(result.control.allocated.textures).toBeGreaterThan(result.baseline.textures);expect(result.control.detached).toEqual(result.control.allocated);expect(result.control.disposed).toEqual(result.baseline);
+ expect(result.final).toEqual(result.baseline);expect(result.pixelsIdentical).toBe(true);
+ const coarse=result.coarse;expect(coarse.cycles).toHaveLength(8);expect(coarse.baseline.geometries).toBe(coarse.homeChunks+1);
+ for(const cycle of coarse.cycles){expect(cycle.refreshed).toEqual(coarse.baseline);expect(cycle.away.geometries).toBe(cycle.awayChunks+1);expect(cycle.away.textures).toBe(coarse.baseline.textures);expect(cycle.returned).toEqual(coarse.baseline);expect(cycle.homeIds).toEqual(coarse.homeIds);}
+ expect(coarse.final).toEqual(coarse.baseline);expect(coarse.authoritativeUnchanged).toBe(true);expect(coarse.pixelsIdentical).toBe(true);expect(coarse.materialized).toBe(0);expect(coarse.triangles).toBeGreaterThan(0);
+ await testInfo.attach('npc-skeleton-gpu-lifecycle',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ await page.screenshot({path:testInfo.outputPath('shared-npc-after-unload.png')});
+});
+
+
+test('raccoon runtime prepares its skinned shadow variant before publishing the first instance',async({page},info)=>{
+ await page.route('**/__wildlife_preparation__',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body></body></html>'}));
+ await page.goto('/__wildlife_preparation__');
+ const result=await page.evaluate(async()=>{
+  const threeUrl='/node_modules/three/build/three.module.js',warmupUrl='/src/scene/visualPrograms.ts',runtimeUrl='/src/scene/wildlifeVisualRuntime.ts';
+  const THREE=await import(threeUrl) as typeof import('three');
+  const {prepareVisualPrograms,prepareVisualShadows}=await import(warmupUrl) as typeof import('../src/scene/visualPrograms.js');
+  const {WildlifeVisualRuntime}=await import(runtimeUrl) as typeof import('../src/scene/wildlifeVisualRuntime.js');
+  const renderer=new THREE.WebGLRenderer();renderer.setSize(32,32);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(60,1,.1,100);camera.position.set(0,1,5);camera.lookAt(0,.5,0);
+  const light=new THREE.DirectionalLight();light.position.set(2,3,4);light.castShadow=true;scene.add(light);
+  const gl=renderer.getContext(),records:string[]=[];const programLog=gl.getProgramInfoLog.bind(gl),shaderLog=gl.getShaderInfoLog.bind(gl);
+  gl.getProgramInfoLog=program=>{records.push('program');return programLog(program);};gl.getShaderInfoLog=shader=>{records.push('shader');return shaderLog(shader);};
+  let prepared=0,instance:import('three').Object3D|undefined;
+  const runtime=new WildlifeVisualRuntime(undefined,async template=>{await prepareVisualPrograms(renderer,camera,scene,[template]);prepareVisualShadows(renderer,camera,scene,[template]);prepared++;});
+  try{
+   await runtime.load('raccoon');const state=runtime.getState('raccoon');instance=runtime.createInstance('raccoon',0);
+   if(!instance)throw Error(state?.reason||'raccoon instance unavailable');
+   instance.traverse(object=>{const mesh=object as import('three').Mesh;if(mesh.isMesh){mesh.castShadow=true;mesh.receiveShadow=true;}});
+   const warmed=records.length;scene.add(instance);renderer.render(scene,camera);await runtime.load('raccoon');
+   return {status:state?.status,prepared,warmed,firstVisibleDraw:records.slice(warmed)};
+  }finally{if(instance)runtime.dispose(instance);gl.getProgramInfoLog=programLog;gl.getShaderInfoLog=shaderLog;renderer.dispose();light.shadow.dispose();}
+ });
+ await info.attach('raccoon-shader-warmup',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ expect(result.status).toBe('ready');expect(result.prepared).toBe(1);expect(result.warmed).toBeGreaterThan(0);expect(result.firstVisibleDraw).toEqual([]);
+});
+
+for(const instanced of [false,true])test(`visual warmup prepares the displayed ${instanced?'instanced':'ordinary'} shader variant before the first visible draw`,async({page},info)=>{
+ await page.route('**/__shader_preparation__',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body></body></html>'}));
+ await page.goto('/__shader_preparation__');
+ const result=await page.evaluate(async(instanced)=>{
+  const threeUrl='/node_modules/three/build/three.module.js',warmupUrl='/src/scene/visualPrograms.ts';
+  const THREE=await import(threeUrl) as typeof import('three');
+  const {prepareVisualPrograms,prepareVisualShadows}=await import(warmupUrl) as typeof import('../src/scene/visualPrograms.js');
+  const renderer=new THREE.WebGLRenderer();renderer.setSize(32,32);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(60,1,.1,100);camera.position.set(0,1,5);camera.lookAt(0,0,0);
+  const light=new THREE.DirectionalLight();light.position.set(2,3,4);light.castShadow=true;scene.add(light);
+  const mesh=instanced?new THREE.InstancedMesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial(),12):new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());mesh.castShadow=true;mesh.receiveShadow=true;
+  const gl=renderer.getContext(),records:string[]=[];
+  const programLog=gl.getProgramInfoLog.bind(gl),shaderLog=gl.getShaderInfoLog.bind(gl);
+  gl.getProgramInfoLog=(program)=>{records.push('program');return programLog(program);};
+  gl.getShaderInfoLog=(shader)=>{records.push('shader');return shaderLog(shader);};
+  try{
+   await prepareVisualPrograms(renderer,camera,scene,[mesh]);prepareVisualShadows(renderer,camera,scene,[mesh]);
+   const warmed=records.length;scene.add(mesh);renderer.render(scene,camera);
+   return {warmed,firstVisibleDraw:records.slice(warmed),viewport:renderer.getViewport(new THREE.Vector4()).toArray(),scissorTest:renderer.getScissorTest()};
+  }finally{gl.getProgramInfoLog=programLog;gl.getShaderInfoLog=shaderLog;renderer.dispose();light.shadow.dispose();if(mesh instanceof THREE.InstancedMesh)mesh.dispose();mesh.geometry.dispose();mesh.material.dispose();}
+ },instanced);
+ await info.attach('display-shader-warmup',{body:Buffer.from(JSON.stringify(result,null,2)),contentType:'application/json'});
+ expect(result.warmed).toBeGreaterThan(0);expect(result.firstVisibleDraw).toEqual([]);expect(result.viewport).toEqual([0,0,32,32]);expect(result.scissorTest).toBe(false);
+});
+
+

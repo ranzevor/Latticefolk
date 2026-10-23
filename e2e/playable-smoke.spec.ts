@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import {crossCoarseBoundary} from './helpers/coarse-native-transition.js';
+import { test, expect, type APIRequestContext, type Page } from './helpers/native-input-probe.js';
 import type { WorldPersistenceSnapshot } from '../src/types.js';
 import { startFirstPerson } from './helpers/native-start.js';
 import { driveNativeWaypoint } from './helpers/native-waypoint.js';
@@ -40,6 +41,7 @@ interface RuntimeSnapshot {
   persistenceSavePending:boolean;
   persistenceRevision:number;
   persistenceConflict:boolean;
+  assetsReady:boolean;
   assetFailures:number;
   licensedVisualTargets:number;
   licensedVisualsResolved:number;
@@ -83,6 +85,7 @@ async function runtime(page:Page):Promise<RuntimeSnapshot> {
       persistenceSavePending:data.persistenceSavePending==='true',
       persistenceRevision:read('persistenceRevision'),
       persistenceConflict:data.persistenceConflict==='true',
+      assetsReady:data.assetsReady==='true',
       assetFailures:read('assetFailures'),
       licensedVisualTargets:read('licensedVisualTargets'),
       licensedVisualsResolved:read('licensedVisualsResolved')
@@ -132,13 +135,15 @@ async function drivePlayerTo(
   page:Page,
   target:{x:number;z:number},
   timeoutMs=20_000,
-  tolerance=.35
+  tolerance=.35,
+  maxInputSeconds?:number
 ) {
-  const result=await page.evaluate(driveNativeWaypoint,{target,timeoutMs,tolerance});
+  const result=await page.evaluate(driveNativeWaypoint,{target,timeoutMs,tolerance,maxInputSeconds});
   expect(
     result.reached,
     `player failed to reach (${target.x}, ${target.z}); stopped at (${result.x.toFixed(3)}, ${result.z.toFixed(3)})`
   ).toBe(true);
+  if(maxInputSeconds!==undefined)expect(result.inputSeconds).toBeLessThanOrEqual(maxInputSeconds);
   return result;
 }
 
@@ -177,7 +182,7 @@ test('real playable scene keeps God View observer-only and uses authoritative gr
   await expect(page.locator('#game canvas')).toBeVisible();
   await expect.poll(async()=>(await runtime(page)).terrainSurfaces,{timeout:15_000}).toBeGreaterThan(0);
   await expect.poll(async()=>(await runtime(page)).cartVisualChildren,{timeout:15_000}).toBeGreaterThan(0);
-  await expect.poll(async()=>(await runtime(page)).assetFailures,{timeout:15_000}).toBe(0);
+  await expect.poll(async()=>{const state=await runtime(page);return {ready:state.assetsReady,failures:state.assetFailures};},{timeout:15_000}).toEqual({ready:true,failures:0});
   await expect.poll(async()=>{const state=await runtime(page);return state.licensedVisualTargets>0&&state.licensedVisualsResolved===state.licensedVisualTargets;},{timeout:15_000}).toBe(true);
 
   const home=await runtime(page);
@@ -257,7 +262,7 @@ test('real playable scene keeps God View observer-only and uses authoritative gr
   await page.reload();
   await expect.poll(async()=>(await runtime(page)).terrainSurfaces,{timeout:15_000}).toBeGreaterThan(0);
   await expect.poll(async()=>(await runtime(page)).cartVisualChildren,{timeout:15_000}).toBeGreaterThan(0);
-  await expect.poll(async()=>(await runtime(page)).assetFailures,{timeout:15_000}).toBe(0);
+  await expect.poll(async()=>{const state=await runtime(page);return {ready:state.assetsReady,failures:state.assetFailures};},{timeout:15_000}).toEqual({ready:true,failures:0});
   await expect.poll(async()=>{const state=await runtime(page);return state.licensedVisualTargets>0&&state.licensedVisualsResolved===state.licensedVisualTargets;},{timeout:15_000}).toBe(true);
   await expect.poll(async()=>Math.abs((await runtime(page)).cartZ-pushedCartZ),{timeout:8_000}).toBeLessThan(.08);
   const restoredGrounding=await runtime(page);
@@ -298,10 +303,10 @@ test('real playable scene keeps God View observer-only and uses authoritative gr
   // authoritative static/dynamic collision, but keep the steering loop inside the page.
   // Hosted software WebGL can make each Playwright protocol round-trip take seconds; the
   // previous per-pulse protocol loop turned a few seconds of gameplay into several minutes.
-  // Real trace showed this waypoint needs more wall-clock budget on software WebGL runners: ~0.6s simulation movement is not enough for the remaining distance.
-  await drivePlayerTo(page,{x:5.2,z:4.0},45_000,.55);
-  // Trace evidence: the second waypoint continued advancing under normal simulation but required more wall-clock budget on hosted software WebGL runners.
-  await drivePlayerTo(page,{x:13.95,z:3.4},45_000,.45);
+  // The original 18s and 25s route ceilings bound attempted movement time;
+  // the 45s wall limit also includes renderer and protocol latency.
+  await drivePlayerTo(page,{x:5.2,z:4.0},45_000,.55,18);
+  await drivePlayerTo(page,{x:13.95,z:3.4},45_000,.45,25);
   const treeApproach=await drivePlayerTo(page,{x:13.95,z:2.35},12_000,.28);
   expect(treeApproach.x).toBeGreaterThan(13.55);
   expect(treeApproach.x).toBeLessThan(14.4);
@@ -459,7 +464,7 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
 
   await page.goto('/');
   await expect(page.locator('#game canvas')).toBeVisible();
-  await expect.poll(async()=>(await runtime(page)).assetFailures,{timeout:30_000}).toBe(0);
+  await expect.poll(async()=>{const state=await runtime(page);return {ready:state.assetsReady,failures:state.assetFailures};},{timeout:30_000}).toEqual({ready:true,failures:0});
   await startFirstPerson(page);
   await expect.poll(async()=>page.evaluate(()=>document.pointerLockElement?.tagName??''),{timeout:10_000}).toBe('CANVAS');
 
@@ -481,6 +486,10 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   };
   const heldGate=new Promise<void>(resolve=>{releaseHeld=resolve;});
   let heldCompleted=false;
+  let releaseFresh=()=>{};
+  const freshGate=new Promise<void>(resolve=>{releaseFresh=resolve;});
+  let freshResponses=0;
+  await page.exposeFunction('notifyCoarseStaleObserved',()=>{releaseFresh();});
   await page.exposeFunction('notifyCoarseTransitionExited',()=>{
     releaseOnce();
   });
@@ -489,7 +498,9 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
   let capturedAt=0;
   await page.route('**/api/world/chunks/decide',async route=>{
     if(heldRequest){
-      await route.continue();
+      await freshGate;
+      await route.continue().catch(()=>{});
+      freshResponses++;
       return;
     }
     heldRequest=JSON.parse(route.request().postData()||'{}') as ChunkDecisionRequestForE2E;
@@ -518,36 +529,19 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
     try {
       await Promise.race([captured,new Promise<never>((_,reject)=>{captureTimer=setTimeout(()=>reject(new Error('No coarse request within 45000 ms')),45_000);})]);
     } finally {clearTimeout(captureTimer);}
-    const transition=await page.evaluate(async()=>{
-      const status=()=>document.querySelector<HTMLElement>('#worldStatus');
-      const data=status()!.dataset;
-      const before={coarseRequestTimeouts:Number(data.coarseRequestTimeouts),coarseDecidedChunks:Number(data.coarseDecidedChunks),coarseLastBatchSize:Number(data.coarseLastBatchSize)};
-      const startedAt=performance.now();
-      const materialized=()=>Number(status()?.dataset.materializedChunks??'NaN');
-      const key=(type:'keydown'|'keyup',code:string)=>window.dispatchEvent(new KeyboardEvent(type,{code,bubbles:true}));
-      const until=async(predicate:()=>boolean,timeoutMs:number)=>{
-        const deadline=performance.now()+timeoutMs;
-        while(!predicate()){
-          if(performance.now()>=deadline)return false;
-          await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
-        }
-        return true;
-      };
-      try {
-        key('keydown','ShiftLeft');key('keydown','KeyD');
-        const entered=await until(()=>materialized()>0,2_500);
-        key('keyup','KeyD');key('keydown','KeyA');
-        const exited=entered&&await until(()=>materialized()===0,2_500);
-        if(exited){
-          const notify=(window as unknown as Window & {
-            notifyCoarseTransitionExited:()=>Promise<void>;
-          }).notifyCoarseTransitionExited;
-          await notify();
-        }
-        return {before,entered,exited,materialized:materialized(),startedAt,finishedAt:performance.now()};
-      } finally {key('keyup','KeyD');key('keyup','KeyA');key('keyup','ShiftLeft');}
-    });
-    releaseOnce(); // Browser transition completion releases the held response immediately; finally remains the safety net.
+    const profiler=await page.context().newCDPSession(page);
+    let transition:Awaited<ReturnType<typeof crossCoarseBoundary>>;
+    await profiler.send('Profiler.enable');
+    await profiler.send('Profiler.start');
+    try{
+      transition=await page.evaluate(crossCoarseBoundary);
+      releaseOnce();
+    }finally{
+      try{
+        const {profile}=await profiler.send('Profiler.stop');
+        await testInfo.attach('coarse-transition-cpu-profile',{body:Buffer.from(JSON.stringify(profile)),contentType:'application/json'});
+      }finally{await profiler.detach();}
+    }
     const before=transition.before;
     await testInfo.attach('coarse-native-transition-timing',{body:Buffer.from(JSON.stringify({capturedAt,releasedAt,transition},null,2)),contentType:'application/json'});
     expect(transition.entered).toBe(true);
@@ -556,21 +550,29 @@ test('coarse policy reply crossing a real materialize-unload transition is disca
 
     releaseOnce();
     await expect.poll(()=>heldCompleted,{timeout:3_000}).toBe(true);
-    await page.waitForTimeout(250);
-    const afterStale=await runtime(page);
+    const afterStale=await page.evaluate(async()=>{
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+      const data=document.querySelector<HTMLElement>('#worldStatus')!.dataset;
+      const snapshot={coarseRequestTimeouts:Number(data.coarseRequestTimeouts),coarseDecidedChunks:Number(data.coarseDecidedChunks),
+        coarseLastBatchSize:Number(data.coarseLastBatchSize),coarseLastSource:data.coarseLastSource};
+      await (window as unknown as {notifyCoarseStaleObserved:()=>Promise<void>}).notifyCoarseStaleObserved();
+      return snapshot;
+    });
     expect(afterStale.coarseRequestTimeouts).toBe(before.coarseRequestTimeouts);
     expect(afterStale.coarseDecidedChunks).toBe(before.coarseDecidedChunks);
     expect(afterStale.coarseLastBatchSize).toBe(before.coarseLastBatchSize);
     expect(afterStale.coarseLastSource).not.toBe('e2e-stale-transition');
     await page.screenshot({path:testInfo.outputPath('coarse-request-transition-rejected.png'),fullPage:true});
 
-    await page.unroute('**/api/world/chunks/decide');
+    releaseFresh();
     await expect.poll(async()=>(await runtime(page)).coarseDecidedChunks,{timeout:40_000}).toBeGreaterThan(before.coarseDecidedChunks);
     const recovered=await runtime(page);
     expect(recovered.coarseLastBatchSize).toBeGreaterThan(0);
+    expect(freshResponses).toBeGreaterThan(0);
     expect(recovered.coarseLastSource).not.toBe('e2e-stale-transition');
   }finally{
-    releaseOnce();
+    releaseOnce();releaseFresh();
     await page.unroute('**/api/world/chunks/decide').catch(()=>{});
   }
 });
+
