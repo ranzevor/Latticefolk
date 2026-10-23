@@ -1,3 +1,4 @@
+import {retireResources} from './retireResources.js';
 import * as THREE from 'three';
 
 const rows=[-1.25,-.42,.42,1.25];
@@ -30,9 +31,15 @@ export function farmCropRows(source:THREE.Object3D):THREE.Group {
   return group;
 }
 
-/** Instance buffers belong to the plot; sourced geometry and materials remain shared. */
+/** Plot-owned instance buffers are terminally retired after one best-effort attempt. */
+const retiredRows=new WeakSet<THREE.InstancedMesh>();
 export function disposeFarmCropRows(root:THREE.Object3D){
+  const meshes:THREE.InstancedMesh[]=[];
   root.traverse(node=>{
-    if(node instanceof THREE.InstancedMesh&&node.userData.farmCropRows)node.dispose();
+    if(node instanceof THREE.InstancedMesh&&node.userData.farmCropRows&&!retiredRows.has(node)){
+      retiredRows.add(node);
+      meshes.push(node);
+    }
   });
+  retireResources(meshes.map(mesh=>()=>mesh.dispose()));
 }
