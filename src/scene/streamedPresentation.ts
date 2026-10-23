@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {retireResources} from './retireResources.js';
 import type {WorldObjectState} from '../types.js';
 import {advancePickupRespawn} from '../world/portableObjects.js';
 import type {LayoutBuilding,LayoutObject,LayoutRoad,StreamedLayout} from '../world/streamedLayouts.js';
@@ -36,11 +37,12 @@ export class StreamedPresentation {
         if(this.staticObjects.has(entry.plan.id))throw new Error(`Duplicate static layout identity ${entry.plan.id}`);
         const object=this.host.create(entry,layout.unit.id,saved.get(entry.plan.id));
         this.staticObjects.set(entry.plan.id,object);this.physicsOwners.set(entry.plan.id,layout.unit.id);objects.push(object);
-        if(!this.activeOwners.has(entry.plan.ownerCellId))this.host.objects.delete(entry.plan.id);
+        if(!this.activeOwners.has(entry.plan.ownerCellId)&&this.host.objects.get(entry.plan.id)===object)this.host.objects.delete(entry.plan.id);
       }
     }catch(error){
-      this.host.release(layout.unit.id,objects);
-      for(const object of objects){this.staticObjects.delete(object.state.id);this.physicsOwners.delete(object.state.id);this.host.objects.delete(object.state.id);}
+      this.forgetObjects(objects);
+      try{this.host.release(layout.unit.id,objects);}
+      catch(cleanupError){throw new AggregateError([error,cleanupError],'Static presentation rollback failed');}
       throw error;
     }
     this.units.set(layout.unit.id,{layout,objects});
@@ -71,13 +73,22 @@ export class StreamedPresentation {
     return changed;
   }
 
-  retainVisible(unitIds:ReadonlySet<string>){
-    for(const [id,unit] of this.units){
-      if(unitIds.has(id)||unit.layout.ownerCellIds.some(owner=>this.activeOwners.has(owner)))continue;
-      this.host.release(id,unit.objects);
-      for(const object of unit.objects){this.staticObjects.delete(object.state.id);this.physicsOwners.delete(object.state.id);if(this.host.objects.get(object.state.id)===object)this.host.objects.delete(object.state.id);}
-      this.units.delete(id);
+  /** End old ownership before invoking callbacks that may present replacement identities. */
+  private forgetObjects(objects:readonly StaticLayoutObject[]){
+    for(const object of objects){
+      const id=object.state.id;
+      if(this.staticObjects.get(id)===object){this.staticObjects.delete(id);this.physicsOwners.delete(id);}
+      if(this.host.objects.get(id)===object)this.host.objects.delete(id);
     }
+  }
+
+  retainVisible(unitIds:ReadonlySet<string>){
+    const candidates=[...this.units];
+    retireResources(candidates.map(([id,unit])=>()=>{
+      if(this.units.get(id)!==unit||unitIds.has(id)||unit.layout.ownerCellIds.some(owner=>this.activeOwners.has(owner)))return;
+      this.units.delete(id);this.forgetObjects(unit.objects);
+      this.host.release(id,unit.objects);
+    }));
   }
 
   diagnostics(){

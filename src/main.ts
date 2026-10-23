@@ -329,10 +329,22 @@ class TownGame {
   readonly streamedPresentation=new StreamedPresentation({objects:this.objects,
     create:(entry,unitId,saved)=>this.createStreamedObject(entry,unitId,saved),
     release:(unitId,objects)=>{
-      const nodes=new Set<THREE.Object3D>();
-      for(const object of objects){object.mesh.traverse(node=>nodes.add(node));disposeFarmCropRows(object.mesh);object.mesh.parent?.remove(object.mesh);
-        if(object.mesh.userData.layoutRoad){const mesh=object.mesh as THREE.Mesh;mesh.geometry.dispose();const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];materials.forEach(m=>m.dispose());}}
-      this.visualTargets=this.visualTargets.filter(target=>!nodes.has(target.group));this.physics.clearChunk(unitId);
+      const nodes=new Set<THREE.Object3D>(),actions:(()=>void)[]=[];
+      for(const object of objects){
+        const mesh=object.mesh;mesh.traverse(node=>nodes.add(node));
+        actions.push(()=>{disposeFarmCropRows(mesh);},()=>{mesh.parent?.remove(mesh);});
+        if(mesh.userData.layoutRoad){
+          const road=mesh as THREE.Mesh,geometry=road.geometry;
+          const materials=Array.isArray(road.material)?[...road.material]:[road.material];
+          actions.push(()=>{geometry.dispose();},...materials.map(material=>()=>{material.dispose();}));
+        }
+      }
+      // Clear old non-resource ownership before dispose listeners can create a new unit.
+      retireResources([
+        ()=>{this.visualTargets=this.visualTargets.filter(target=>!nodes.has(target.group));},
+        ()=>{this.physics.clearChunk(unitId);},
+        ...actions
+      ]);
     }});
   randomness=readWorldRandomness(undefined);
   interactionOpen = false;
@@ -1670,8 +1682,10 @@ class TownGame {
           objectStates:[...staticStates,...(previous?.objectStates||[]).filter(s=>!this.streamedPresentation.has(s.id))]});
       }
     }
-    this.streamedPresentation.retainVisible(new Set(units.keys()));
-    this.syncKnownActorPresentation();
+    retireResources([
+      ()=>{this.streamedPresentation.retainVisible(new Set(units.keys()));},
+      ()=>{this.syncKnownActorPresentation();}
+    ]);
   }
 
   syncKnownActorPresentation() {
