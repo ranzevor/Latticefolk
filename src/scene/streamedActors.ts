@@ -1,3 +1,4 @@
+import {retireResources} from './retireResources.js';
 import type {Object3D} from 'three';
 
 interface PresentedActor {state:{id:string;chunkId?:string};mesh:Object3D;}
@@ -22,9 +23,9 @@ export class StreamedActors<T extends PresentedActor> {
   }
 
   retain(owners:ReadonlySet<string>,active:ReadonlyMap<string,T>){
-    for(const actor of this.actors.values()){
-      if(active.get(actor.state.id)===actor||owners.has(actor.state.chunkId!))continue;
-      this.remove(actor);
-    }
+    const retired=[...this.actors.values()].filter(actor=>
+      active.get(actor.state.id)!==actor&&!owners.has(actor.state.chunkId!)
+    );
+    retireResources(retired.map(actor=>()=>{this.remove(actor);}));
   }
 }

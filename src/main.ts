@@ -1,3 +1,4 @@
+import {retireResources} from './scene/retireResources.js';
 import {prepareVisualPrograms,prepareVisualShadows} from './scene/visualPrograms';
 import {disposeOwnedSkeletons} from './scene/ownedSkeletons.js';
 import {rememberOwnedMeshResources,disposeOwnedMeshResources} from './scene/ownedMeshResources.js';
@@ -305,12 +306,16 @@ class TownGame {
   assets = new Map<string,AssetTemplate>();
   visualTargets: VisualTarget[] = [];
   readonly streamedNpcs=new StreamedActors<NpcRuntime>(agent=>{
-    agent.mixer?.stopAllAction();
-    if(agent.mixer)agent.mixer.uncacheRoot(agent.mixer.getRoot());
-    disposeOwnedSkeletons(agent.mesh);
-    agent.mesh.removeFromParent();
-    if(agent.speechEl.parentNode)agent.speechEl.remove();if(agent.nameEl.parentNode)agent.nameEl.remove();
-    this.visualTargets=this.visualTargets.filter(target=>target.group!==agent.mesh);
+    const {mixer,mesh,speechEl,nameEl}=agent;
+    retireResources([
+      ()=>{mixer?.stopAllAction();},
+      ()=>{if(mixer)mixer.uncacheRoot(mixer.getRoot());},
+      ()=>{disposeOwnedSkeletons(mesh);},
+      ()=>{mesh.removeFromParent();},
+      ()=>{if(speechEl.parentNode)speechEl.remove();},
+      ()=>{if(nameEl.parentNode)nameEl.remove();},
+      ()=>{this.visualTargets=this.visualTargets.filter(target=>target.group!==mesh);}
+    ]);
   });
   readonly streamedWildlife=new StreamedActors<WildlifeRuntime>(animal=>{
     this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.removeFromParent();
@@ -1693,8 +1698,10 @@ class TownGame {
         this.createWildlifeVisual(state);
       }
     }
-    this.streamedNpcs.retain(owners,this.npcs);
-    this.streamedWildlife.retain(owners,this.wildlife);
+    retireResources([
+      ()=>{this.streamedNpcs.retain(owners,this.npcs);},
+      ()=>{this.streamedWildlife.retain(owners,this.wildlife);}
+    ]);
   }
 
   updateFineChunkMaterialization() {
