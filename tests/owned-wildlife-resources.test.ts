@@ -1,3 +1,4 @@
+import {retireResources} from '../src/scene/retireResources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -15,7 +16,7 @@ function fixture(){
     if(member.name&&['makeProceduralAnimal','streamedWildlife','removeWildlife'].includes(member.name.getText(ast)))members.push(member.getText(ast));
   assert.equal(members.length,3);
   const code=ts.transpileModule(`return class Runtime {${members.join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-  const deps={i18n:{t:(s:string)=>s},rememberOwnedMeshResources,disposeOwnedMeshResources,THREE,StreamedActors,effectiveWildlifeMorphology,normalizeWildlifePhenotype,normalizeWildlifeOrganismGenome,clamp:(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n))};
+  const deps={retireResources,i18n:{t:(s:string)=>s},rememberOwnedMeshResources,disposeOwnedMeshResources,THREE,StreamedActors,effectiveWildlifeMorphology,normalizeWildlifePhenotype,normalizeWildlifeOrganismGenome,clamp:(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n))};
   const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps));
   const runtime=new Runtime();runtime.wildlifePresentation={remove:()=>false};
   const state={id:'sheep-1',species:'sheep',traits:{speed:1,size:.58,fertility:1,wariness:1}};

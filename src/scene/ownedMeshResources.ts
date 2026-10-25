@@ -1,4 +1,5 @@
 import type {BufferGeometry,Material,Mesh,Object3D} from 'three';
+import {retireResources} from './retireResources.js';
 
 const owned=new WeakMap<Object3D,{geometries:Set<BufferGeometry>;materials:Set<Material>}>();
 
@@ -12,7 +13,9 @@ export function rememberOwnedMeshResources(root:Object3D,materials:Iterable<Mate
 export function disposeOwnedMeshResources(root:Object3D):boolean {
   const resources=owned.get(root);if(!resources)return false;
   owned.delete(root);
-  for(const geometry of resources.geometries)geometry.dispose();
-  for(const material of resources.materials)material.dispose();
+  retireResources([
+    ...[...resources.geometries].map(geometry=>()=>{geometry.dispose();}),
+    ...[...resources.materials].map(material=>()=>{material.dispose();})
+  ]);
   return true;
 }

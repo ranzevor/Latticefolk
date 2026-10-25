@@ -201,8 +201,12 @@ export function applyRaccoonAppearance(
     mesh.computeBoundingSphere();
     return { animations: adaptedAnimations, geometries };
   } catch (error) {
-    geometry.dispose();
     mesh.geometry = sourceGeometry;
+    try {
+      geometry.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Raccoon appearance creation failed');
+    }
     throw error;
   }
 }

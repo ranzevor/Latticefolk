@@ -318,7 +318,11 @@ class TownGame {
     ]);
   });
   readonly streamedWildlife=new StreamedActors<WildlifeRuntime>(animal=>{
-    this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.removeFromParent();
+    retireResources([
+      ()=>{this.wildlifePresentation.remove(animal);},
+      ()=>{disposeOwnedMeshResources(animal.mesh);},
+      ()=>{animal.mesh.removeFromParent();}
+    ]);
   });
   assetRoot = '/assets/quaternius';
   assetsReady = false;
@@ -361,6 +365,7 @@ class TownGame {
   persistenceConflict = false;
   persistenceLoadBlocked = false;
   streamedLayoutError?:string;
+  readonly wildlifeRetirementErrors:unknown[]=[];
   lastPersistenceSaveAt = 0;
   wildlifeDecisionPending = false;
   nextWildlifeBatchAt = 0;
@@ -3101,7 +3106,7 @@ class TownGame {
   }
 
   removeWildlife(animal:WildlifeRuntime,reason:WildlifeDeathReason) {
-    if(animal.removed)return;
+    if(animal.removed||this.wildlife.get(animal.state.id)!==animal)return;
     this.recordWildlifeHabitatExposure(animal.state,true);
     const currentDay=this.day+this.minuteOfDay/1440;
     const record=this.ensureWildlifeLineage(animal.state);
@@ -3118,8 +3123,19 @@ class TownGame {
       this.lineageEpoch++;
     }
     animal.removed=true;
-    if(!this.streamedWildlife.remove(animal)){this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.parent?.remove(animal.mesh);}
     this.wildlife.delete(animal.state.id);
+    try{
+      if(!this.streamedWildlife.remove(animal))retireResources([
+        ()=>{this.wildlifePresentation.remove(animal);},
+        ()=>{disposeOwnedMeshResources(animal.mesh);},
+        ()=>{animal.mesh.removeFromParent();}
+      ]);
+    }catch(error){
+      this.wildlifeRetirementErrors.push(error);
+      this.persistenceLoadBlocked=true;this.clearMovablePersistenceQueue();
+      this.streamedLayoutError=error instanceof Error?error.message:String(error);
+      this.log(i18n.t('persistence.loadFailed',{error:this.streamedLayoutError}));
+    }
     this.event(`${this.wildlifeName(animal.state.species)} ${animal.state.id} ${i18n.t(`evolution.death.${reason}`)}。`);
   }
 
