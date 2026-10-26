@@ -59,6 +59,38 @@ test('normal startup still constructs once and keeps the original entry UI and h
   assert.equal(f.app.querySelector('[role="alert"]'),null);
 });
 
+test('failed startup keeps language changes usable and removes dead game controls from keyboard focus',t=>{
+  const f=fixture('zh-CN'),window=f.document.defaultView!,canvas=f.document.createElement('canvas');
+  canvas.getContext=(()=>null) as typeof canvas.getContext;
+  let staleLocaleChanges=0,gameKeys=0,modeChanges=0;
+  const original=f.app.querySelector<HTMLSelectElement>('#localeSelect')!;
+  original.addEventListener('change',()=>staleLocaleChanges++);
+  window.addEventListener('keydown',()=>gameKeys++);
+  f.app.querySelector<HTMLButtonElement>('#modeBtn')!.addEventListener('click',()=>modeChanges++);
+  class UnavailableTown {renderer=new THREE.WebGLRenderer({canvas});}
+  t.mock.method(console,'error',()=>{});
+  f.run(UnavailableTown);
+  const locale=f.app.querySelector<HTMLSelectElement>('#localeSelect')!;
+  const alert=f.app.querySelector<HTMLElement>('[role="alert"]')!;
+  assert.notEqual(locale,original);assert.equal(original.isConnected,false);
+  assert.equal(locale.closest('.start-card')!==null,true);assert.equal(locale.disabled,false);
+  assert.equal(f.document.activeElement,alert);
+  assert.deepEqual([...f.app.querySelectorAll('button:enabled,input:enabled,select:enabled,textarea:enabled')],[locale]);
+  f.app.querySelector<HTMLButtonElement>('#modeBtn')!.click();assert.equal(modeChanges,0);
+  locale.dispatchEvent(new window.KeyboardEvent('keydown',{key:'g',bubbles:true}));assert.equal(gameKeys,0);
+  for(const {code} of SUPPORTED_LOCALES){
+    locale.value=code;locale.dispatchEvent(new window.Event('change',{bubbles:true}));
+    assert.equal(locale.value,code);assert.equal(f.document.documentElement.lang,code);
+    assert.equal(alert.textContent,new I18n(code).t('start.graphicsUnavailable'));
+    assert.equal(f.button.textContent,labels[code]);
+    assert.equal(f.app.querySelector('[data-i18n="start.retry"]')!.textContent,new I18n(code).t('start.retry'));
+  }
+  const unknown=f.document.createElement('option');unknown.value='unknown-locale';locale.append(unknown);
+  locale.value=unknown.value;locale.dispatchEvent(new window.Event('change',{bubbles:true}));
+  assert.equal(locale.value,'en');assert.equal(alert.textContent,new I18n('en').t('start.graphicsUnavailable'));
+  assert.equal(staleLocaleChanges,0,'partially initialized game handlers must not run in the failed state');
+});
+
 test('unexpected constructor failures stay blocked without leaking thrown markup or claiming a WebGL diagnosis',t=>{
   t.mock.method(console,'error',()=>{});
   for(const error of [new Error('<img src=x onerror=alert(1)>'),'unexpected startup failure']){
