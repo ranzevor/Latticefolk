@@ -2475,6 +2475,20 @@ class TownGame {
     if(object?.state.kind==='dropped_item'&&['drink','graze','forage'].includes(s.currentAction)){
       s.targetObjectId=undefined;s.currentAction='rest';animal.actionResolved=true;return;
     }
+    if(s.currentAction==='drink'&&(!object||!object.mesh.visible
+      ||!(object.state.tags.includes('water')||object.state.kind==='well'))){
+      s.targetObjectId=undefined;s.currentAction='rest';animal.actionResolved=true;return;
+    }
+    if((s.currentAction==='graze'||s.currentAction==='forage')&&s.targetObjectId){
+      const resource=object?.state;
+      const forageTags=wildlifeSpeciesProfile(s.species).forageTags;
+      const water=resource?.tags.includes('water')||resource?.kind==='well'||resource?.kind==='water_patch';
+      const edible=resource&&(resource.tags.some(tag=>forageTags.includes(tag)&&tag!=='nature'&&tag!=='farm')
+        ||resource.kind==='bush'||resource.kind==='flower'||(resource.kind==='tree'&&resource.tags.includes('apple')));
+      if(!object||!object.mesh.visible||water||!edible){
+        s.targetObjectId=undefined;s.currentAction='rest';animal.actionResolved=true;return;
+      }
+    }
     const random=beginRandomEvent(this.randomness,s,'wildlife-completion',s.currentAction,s.targetObjectId,s.targetWildlifeId,s.targetChunkId);
     const other=s.targetWildlifeId?this.wildlife.get(s.targetWildlifeId):undefined;
     switch(s.currentAction){
@@ -2484,19 +2498,26 @@ class TownGame {
       case 'forage': {
         const profile=wildlifeSpeciesProfile(s.species);
         const hungerRelief=(s.currentAction==='graze'?34:28)*functional.forageEfficiency;
-        s.hunger=clamp(s.hunger-hungerRelief,0,100);
-        if(object&&typeof object.state.resourceAmount==='number')object.state.resourceAmount=Math.max(0,object.state.resourceAmount-.25);
-        else {
+        let consumed=0;
+        if(object&&typeof object.state.resourceAmount==='number'){
+          const before=object.state.resourceAmount;
+          object.state.resourceAmount=Math.max(0,before-.25);
+          consumed=Math.max(0,before-object.state.resourceAmount);
+        }else {
           const chunk=this.coarseWorld.chunks.get(s.chunkId);
           if(chunk?.plants){
             const genome=normalizeWildlifeOrganismGenome(s.species,s.organismGenome,s.id);
             const amount=.35,weights=wildlifeGenomePlantConsumptionWeights(s.species,genome);
+            const before={...chunk.plants};
             chunk.plants.grass=clamp(chunk.plants.grass-amount*weights.grass,0,100);
             chunk.plants.shrub=clamp(chunk.plants.shrub-amount*weights.shrub,0,100);
             chunk.plants.fruit=clamp(chunk.plants.fruit-amount*weights.fruit,0,100);
             chunk.plants.crop=clamp(chunk.plants.crop-amount*weights.crop,0,100);
+            consumed=Math.max(0,(before.grass-chunk.plants.grass)+(before.shrub-chunk.plants.shrub)
+              +(before.fruit-chunk.plants.fruit)+(before.crop-chunk.plants.crop));
           }
         }
+        if(consumed>0)s.hunger=clamp(s.hunger-hungerRelief,0,100);
         break;
       }
       case 'rest':

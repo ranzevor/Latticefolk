@@ -1,8 +1,15 @@
 import { defineConfig } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const temporaryOutput = process.env.PLAYWRIGHT_OUTPUT_DIR && process.env.PLAYWRIGHT_HTML_OUTPUT_DIR
+  ? '' : mkdtempSync(join(tmpdir(), 'latticefolk-playwright-'));
 
 export default defineConfig({
   testDir: './e2e',
+  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR || join(temporaryOutput, 'test-results'),
   // The playable scenarios share one server-side SQLite world. Separate files must not
   // reset or write that world concurrently; isolate storage before increasing workers.
   workers: 1,
@@ -11,7 +18,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [
     ['list'],
-    ['html', { open: 'never', outputFolder: 'playwright-report' }]
+    ['html', { open: 'never', outputFolder: process.env.PLAYWRIGHT_HTML_OUTPUT_DIR || join(temporaryOutput, 'playwright-report') }]
   ],
   use: {
     baseURL: 'http://127.0.0.1:5173',
@@ -30,7 +37,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
-      JEV_PROVIDER: 'fallback',
+      DECISION_PROVIDER: 'fallback',
       // The tests reset their world: never point them at a player's regular save.
       WORLD_DB_PATH: fileURLToPath(new URL('./data/latticefolk.e2e.sqlite',import.meta.url))
     }
