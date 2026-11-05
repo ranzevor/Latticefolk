@@ -83,7 +83,9 @@ for(const at of [NaN,Infinity,-1])test(`invalid time ${at} resets rather than in
 
 test('backward frame or input timestamps fail closed',()=>{
   const f=fixture();f.frame(100);assert.equal(f.clock.record(99,east),false);
-  f.frame(100);f.clock.record(120,east);assert.equal(f.frame(119),false);assert.equal(f.steps.length,0);
+  f.frame(100);assert.equal(f.clock.record(120,east),true);assert.equal(f.frame(119),true);
+  near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.019);assert.ok(f.steps.every(s=>s.input===undefined));near(f.clock.consumedThroughMs!,119);
+  f.steps.length=0;assert.equal(f.frame(99),false);assert.equal(f.steps.length,0);assert.equal(f.clock.diagnostics.resetReason,'invalid-time');
 });
 
 test('queue overflow preserves accepted input/time debt and inserts a bounded release boundary',()=>{
@@ -109,9 +111,10 @@ for(const [press,release,expected] of [[2500,2800,.3],[1500,2300,.8],[4800,5100,
  const f=fixture();f.frame(0);f.frame(5000);near(f.clock.consumedThroughMs!,2000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(press,5200,east),true);assert.equal(f.clock.recordEvent(release,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.clock.consumedThroughMs!,4000);near(f.clock.diagnostics.simulatedSeconds,2);near(f.clock.diagnostics.pendingSeconds,1.3);
  f.clock.advanceFrame(5500,5501,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),expected);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),3.5);near(f.clock.consumedThroughMs!,5500);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
 
@@ -120,9 +123,10 @@ test('a fully late native press and release retain their held duration after the
  assert.equal(f.clock.recordEvent(1000,5200,east),true);
  assert.equal(f.clock.recordEvent(1200,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.clock.consumedThroughMs!,4000);near(f.clock.diagnostics.simulatedSeconds,2);near(f.clock.diagnostics.pendingSeconds,1.3);
  f.clock.advanceFrame(5300,5401,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.3);near(f.clock.consumedThroughMs!,5300);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),3.3);near(f.clock.consumedThroughMs!,5300);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
 test('a partially late native interval shifts as a unit without replaying consumed world time',()=>{
@@ -130,9 +134,10 @@ test('a partially late native interval shifts as a unit without replaying consum
  assert.equal(f.clock.recordEvent(1900,5200,east),true);
  assert.equal(f.clock.recordEvent(2100,5201,undefined),true);
  f.clock.advanceFrame(5300,5400,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.clock.consumedThroughMs!,4000);near(f.clock.diagnostics.simulatedSeconds,2);near(f.clock.diagnostics.pendingSeconds,1.3);
  f.clock.advanceFrame(5300,5401,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),5.3);near(f.clock.consumedThroughMs!,5300);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),3.3);near(f.clock.consumedThroughMs!,5300);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
 test('late native release is applied once and a fresh press starts at its own timestamp',()=>{
@@ -140,9 +145,10 @@ test('late native release is applied once and a fresh press starts at its own ti
  f.clock.recordEvent(1000,5200,east);f.clock.recordEvent(1200,5201,undefined);
  f.clock.recordEvent(5250,5251,east);f.clock.recordEvent(5350,5351,undefined);
  f.clock.advanceFrame(5400,5401,(seconds,input)=>f.steps.push({seconds,input}));
+ near(f.clock.consumedThroughMs!,4000);near(f.clock.diagnostics.simulatedSeconds,2);near(f.clock.diagnostics.pendingSeconds,1.4);
  f.clock.advanceFrame(5400,5402,(seconds,input)=>f.steps.push({seconds,input}));
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.3);
- near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.4);
+ near(f.steps.reduce((sum,s)=>sum+s.seconds,0),3.4);near(f.clock.consumedThroughMs!,5400);near(f.clock.diagnostics.pendingSeconds,0);
 });
 
 test('suspension clears the late-event offset and held input',()=>{
@@ -156,6 +162,6 @@ test('suspension clears the late-event offset and held input',()=>{
 test('retained input insertion cannot rewind consumed time or bypass handled-time ordering',()=>{
  const f=fixture();f.frame(0);f.frame(1000);f.steps.length=0;
  assert.equal(f.clock.recordEvent(100,1200,east),true);assert.equal(f.clock.recordEvent(300,1201,undefined),true);f.frame(1300);
- near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);near(f.steps.reduce((sum,s)=>sum+s.seconds,0),1.3);
+ near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.3);near(f.clock.consumedThroughMs!,1300);
  assert.equal(f.clock.recordEvent(1200,1299,east),false);assert.equal(f.clock.diagnostics.resetReason,'invalid-time');
 });

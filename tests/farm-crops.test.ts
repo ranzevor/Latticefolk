@@ -5,15 +5,16 @@ import ts from 'typescript';
 import * as THREE from 'three';
 import {farmCropRows,disposeFarmCropRows} from '../src/scene/farmCrops.js';
 import {StreamedPresentation} from '../src/scene/streamedPresentation.js';
+import {retireResources} from '../src/scene/retireResources.js';
 import {sourceGltf} from './helpers/source-gltf.js';
 
 const sourceText=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',sourceText,ts.ScriptTarget.Latest,true);
 const game=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='TownGame') as ts.ClassDeclaration;
 const method=(name:string)=>game.members.find(n=>n.name?.getText(ast)===name)!.getText(ast);
-const Runtime=new Function('THREE','farmCropRows','disposeFarmCropRows','StreamedPresentation',ts.transpileModule(
+const Runtime=new Function('THREE','farmCropRows','disposeFarmCropRows','StreamedPresentation','retireResources',ts.transpileModule(
   `return class Runtime {objects=new Map();${['streamedPresentation','normalizeModel','pickEntity','applyVisualTarget','attachVisualTarget','addFarmPlotObject'].map(method).join('\n')}}`,
-  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(THREE,farmCropRows,disposeFarmCropRows,StreamedPresentation);
+  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(THREE,farmCropRows,disposeFarmCropRows,StreamedPresentation,retireResources);
 const originalRows=(source:THREE.Object3D)=>{
   const group=new THREE.Group();
   for(const x of [-1.25,-.42,.42,1.25])for(const z of [-.72,0,.72]){

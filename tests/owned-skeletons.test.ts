@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import * as THREE from 'three';
 import {clone} from 'three/examples/jsm/utils/SkeletonUtils.js';
 import {disposeOwnedSkeletons} from '../src/scene/ownedSkeletons.js';
+import {retireResources} from '../src/scene/retireResources.js';
 const template=()=>{
  const root=new THREE.Group(),bone=new THREE.Bone();root.add(bone);
  const mesh=new THREE.SkinnedMesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial());
@@ -27,11 +28,11 @@ test('released cloned skeleton disposes its texture without disposing shared sou
 test('NPC release callback disposes cloned bone textures after uncaching animation',()=>{
  const text=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
  const body=text.split('new StreamedActors<NpcRuntime>(agent=>{')[1].split('\n  });')[0];
- const release=new Function('agent','disposeOwnedSkeletons',body);
+ const release=new Function('agent','disposeOwnedSkeletons','retireResources',body);
  const {root,mesh}=template();mesh.skeleton.computeBoneTexture();let disposed=0;
  mesh.skeleton.boneTexture!.addEventListener('dispose',()=>disposed++);
  const dom=()=>({parentNode:true,remove(){this.parentNode=false;}});
  const agent={mesh:root,speechEl:dom(),nameEl:dom()};const host={visualTargets:[{group:root}]};
- release.call(host,agent,disposeOwnedSkeletons);
+ release.call(host,agent,disposeOwnedSkeletons,retireResources);
  assert.equal(mesh.skeleton.boneTexture,null);assert.equal(disposed,1);assert.equal(host.visualTargets.length,0);
 });

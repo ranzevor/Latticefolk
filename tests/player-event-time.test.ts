@@ -22,7 +22,7 @@ test('actual player methods retain a delayed native press interval before the ne
 });
 test('delayed events cannot replay input before already consumed simulation time',()=>{
  const f=fixture();f.frame(0);f.frame(1000);f.at(1500);f.r.playerMovementKey('KeyD',true,false,800);f.at(1500.1);f.r.playerMovementKey('KeyD',false,false,1250);f.frame(1600);
- assert.ok(Math.abs(f.accepted-.25)<1e-9);assert.equal(f.r.simulationClock.diagnostics.resetReason,'none');
+ assert.ok(Math.abs(f.accepted-.45)<1e-9);assert.equal(f.r.simulationClock.consumedThroughMs,1600);assert.equal(f.r.simulationClock.diagnostics.resetReason,'none');
 });
 for(const eventAt of [NaN,Infinity,-1,5000])test(`invalid or future event time ${eventAt} falls back to handling time`,()=>{
  const f=fixture();f.frame(0);f.at(100);f.r.playerMovementKey('KeyD',true,false,eventAt);f.at(350);f.r.playerMovementKey('KeyD',false,false,eventAt);f.frame(400);
