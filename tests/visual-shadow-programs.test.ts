@@ -96,3 +96,90 @@ test('shadow light-state preparation failure restores renderer state and release
  assert.throws(()=>prepareVisualShadows(r.api,new THREE.PerspectiveCamera(),scene,[mesh]),/light state preparation failed/);
  assert.equal(released,1);assert.equal(shared,0);r.check();
 });
+
+const restorationSteps=['target','viewport','scissor','scissorTest','needsUpdate'] as const;
+function failingRestoration(r:ReturnType<typeof renderer>,calls:string[],failures:Map<string,unknown>){
+ const target=r.api.setRenderTarget.bind(r.api),viewport=r.api.setViewport.bind(r.api),scissor=r.api.setScissor.bind(r.api),scissorTest=r.api.setScissorTest.bind(r.api);
+ const finish=(name:string)=>{calls.push(name);if(failures.has(name))throw failures.get(name);};
+ r.api.setRenderTarget=(...args)=>{target(...args);finish('target');};
+ let viewCalls=0,scissorCalls=0,testCalls=0,update=false;
+ r.api.setViewport=((value:THREE.Vector4)=>{viewport(value);if(++viewCalls===2)finish('viewport');}) as typeof r.api.setViewport;
+ r.api.setScissor=((value:THREE.Vector4)=>{scissor(value);if(++scissorCalls===2)finish('scissor');}) as typeof r.api.setScissor;
+ r.api.setScissorTest=value=>{scissorTest(value);if(++testCalls===2)finish('scissorTest');};
+ Object.defineProperty(r.api.shadowMap,'needsUpdate',{get:()=>update,set:(value:boolean)=>{update=value;if(!value)finish('needsUpdate');}});
+}
+
+function shadowModels(){
+ const root=new THREE.Group(),geometry=new THREE.BoxGeometry(),material=new THREE.MeshStandardMaterial();
+ root.add(new THREE.InstancedMesh(geometry,material,1),new THREE.InstancedMesh(geometry,material,1));
+ for(let i=0;i<2;i++){
+  const bone=new THREE.Bone(),skin=new THREE.SkinnedMesh(geometry,material);skin.add(bone);skin.bind(new THREE.Skeleton([bone]));skin.skeleton.computeBoneTexture();root.add(skin);
+ }
+ let shared=0;geometry.addEventListener('dispose',()=>shared++);material.addEventListener('dispose',()=>shared++);
+ root.traverse(node=>{
+  if(node instanceof THREE.InstancedMesh)node.addEventListener('dispose',()=>shared++);
+  if(node instanceof THREE.SkinnedMesh)node.skeleton.boneTexture!.addEventListener('dispose',()=>shared++);
+ });
+ return{root,shared:()=>shared};
+}
+
+function observeOwnedShadowResources(staged:THREE.Object3D,calls:string[],failures:Map<string,unknown>){
+ let lights=0,instances=0,skeletons=0;
+ const disposed=(name:string)=>{calls.push(name);if(failures.has(name))throw failures.get(name);};
+ staged.traverse(node=>{
+  if(node instanceof THREE.DirectionalLight){
+   const name=`shadow${lights++}`;node.shadow.map=new THREE.WebGLRenderTarget(1,1);node.shadow.map.addEventListener('dispose',()=>disposed(name));
+  }
+  if(node instanceof THREE.InstancedMesh){const name=`instance${instances++}`;node.addEventListener('dispose',()=>disposed(name));}
+  if(node instanceof THREE.SkinnedMesh){const name=`skeleton${skeletons++}`;node.skeleton.computeBoneTexture();node.skeleton.boneTexture!.addEventListener('dispose',()=>disposed(name));}
+ });
+}
+
+for(const phase of ['success','compile','render'] as const)test(`shadow ${phase} retains all failures and attempts every restoration and release`,()=>{
+ const scene=new THREE.Scene(),firstLight=new THREE.DirectionalLight(),secondLight=new THREE.DirectionalLight();scene.add(firstLight,secondLight);
+ const original=shadowModels(),calls:string[]=[],operationFailure=phase==='compile'?undefined:null;
+ const failureNames=[...restorationSteps,'shadow0','shadow1','instance0','skeleton0','clear'];
+ const failures=new Map<string,unknown>(failureNames.map(name=>[name,new AggregateError([name],name)]));
+ let staged!:THREE.Object3D,held:THREE.Object3D[]=[],rendered=0,sharedShadows=0;
+ for(const light of [firstLight,secondLight]){light.shadow.map=new THREE.WebGLRenderTarget(2,2);light.shadow.map.addEventListener('dispose',()=>sharedShadows++);}
+ const r=renderer(()=>{rendered++;if(phase==='render')throw operationFailure;});
+ r.api.compile=object=>{
+  staged=object;held=[...object.children];observeOwnedShadowResources(object,calls,failures);
+  object.children[0]!.addEventListener('removed',()=>{calls.push('clear');throw failures.get('clear');});
+  if(phase==='compile')throw operationFailure;return new Set<THREE.Material>();
+ };
+ failingRestoration(r,calls,failures);
+ assert.throws(()=>prepareVisualShadows(r.api,new THREE.Camera(),scene,[original.root]),error=>{
+  assert.ok(error instanceof AggregateError);
+  const expected=[...(phase==='success'?[]:[operationFailure]),...failureNames.map(name=>failures.get(name))];
+  assert.deepEqual(error.errors,expected);for(let i=0;i<expected.length;i++)assert.equal(error.errors[i],expected[i]);return true;
+ });
+ assert.deepEqual(calls,[...restorationSteps,'shadow0','shadow1','instance0','instance1','skeleton0','skeleton1','clear']);
+ assert.equal(rendered,phase==='compile'?0:1);assert.equal(staged.children.length,0);assert.equal(original.shared(),0);assert.equal(sharedShadows,0);r.check();
+ for(const child of held)assert.equal(child.parent,null);
+});
+
+for(const origin of ['compile','render',...restorationSteps,'shadow0','instance0','skeleton0','clear'])test(`a single shadow ${origin} failure retains its original object`,()=>{
+ const scene=new THREE.Scene();scene.add(new THREE.DirectionalLight(),new THREE.DirectionalLight());
+ const original=shadowModels(),calls:string[]=[],failure=new AggregateError([{}],origin),failures=new Map([[origin,failure]]);
+ let staged!:THREE.Object3D;
+ const r=renderer(()=>{if(origin==='render')throw failure;});
+ r.api.compile=object=>{
+  staged=object;observeOwnedShadowResources(object,calls,failures);
+  if(origin==='clear')object.children[0]!.addEventListener('removed',()=>{calls.push('clear');throw failure;});
+  if(origin==='compile')throw failure;return new Set<THREE.Material>();
+ };
+ failingRestoration(r,calls,failures);
+ let caught:unknown;try{prepareVisualShadows(r.api,new THREE.Camera(),scene,[original.root]);}catch(error){caught=error;}
+ assert.equal(caught,failure);assert.equal(staged.children.length,0);assert.equal(original.shared(),0);
+ assert.deepEqual(calls,[...restorationSteps,'shadow0','shadow1','instance0','instance1','skeleton0','skeleton1',...(origin==='clear'?['clear']:[])]);r.check();
+});
+
+test('shadow cleanup releases earlier clones when a template iterator fails',()=>{
+ const scene=new THREE.Scene();scene.add(new THREE.DirectionalLight());
+ const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial(),1),failure={iterator:true};let disposed=0;
+ const clone=mesh.clone.bind(mesh);mesh.clone=()=>{const model=clone();model.addEventListener('dispose',()=>disposed++);return model;};
+ const templates={*[Symbol.iterator](){yield mesh;throw failure;}},r=renderer(()=>assert.fail('unexpected render'));
+ let caught:unknown;try{prepareVisualShadows(r.api,new THREE.Camera(),scene,templates);}catch(error){caught=error;}
+ assert.equal(caught,failure);assert.equal(disposed,1);r.check();
+});
