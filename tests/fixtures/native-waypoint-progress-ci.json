@@ -1,21 +1,5 @@
 {
-  "name": "Run 37164838743 first waypoint, ten-frame Nao reciprocal-yield contact",
-  "source": {
-    "commit": "78bfc696",
-    "startTime": "2026-10-04T00:55:34.236Z",
-    "endTime": "2026-10-04T00:55:49.858Z",
-    "startMonotonicMs": 1795990.275,
-    "endMonotonicMs": 1811630.225,
-    "startMinuteOfDay": 521.5100000000033,
-    "endMinuteOfDay": 522.6100000000034
-  },
-  "limits": [
-    "Positions/headings and end positions are captured facts.",
-    "Continuing positive yield direction is inferred from exact motion and tested against original physics.",
-    "Initial remaining yield distance is generated and non-binding; it is not captured.",
-    "Other NPCs are fixed at their initial captured poses.",
-    "Ordinary NPC path state and decisions are unavailable. The harness throws if Nao leaves yielding; it cannot certify a complete alternate navigation trajectory."
-  ],
+  "name": "Partial player and NPC contact progress",
   "target": {
     "x": 5.2,
     "z": 4

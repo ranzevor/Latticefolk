@@ -254,6 +254,6 @@ If Latticefolk is useful in research, demos, teaching, or derivative simulation 
 Source code is licensed under [MIT](LICENSE). Bundled third-party assets retain their original licenses; currently redistributed Quaternius assets used by the demo are CC0 and documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 
-Local source-frozen verification without GitHub Actions: `npm run validate:local`. It retains complete source and browser evidence under `.local-validation/` and uses a dedicated E2E database. See [validation boundaries](docs/local-validation.md).
+Run local validation with `npm run validate:local`. Source snapshots and browser results are written to a unique system temporary directory, using a dedicated E2E database. See [local validation](docs/local-validation.md).
 
 Bakers now approach a source-derived exterior oven stance before producing; optional NPC facing is retained through compatible version-1 saves so oriented contact survives reload.

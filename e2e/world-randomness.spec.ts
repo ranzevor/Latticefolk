@@ -1,6 +1,7 @@
 import {type Request} from '@playwright/test';
 import {test,expect,type APIRequestContext,type Page} from './helpers/native-input-probe.js';
 import {driveNativeWaypoint} from './helpers/native-waypoint.js';
+import {driveLateWildlifeTransition} from './helpers/late-wildlife-transition.js';
 import type {CoarseChunkState,NpcState,WildlifeDecisionBatchRequest,WildlifeState,WorldPersistenceSnapshot} from '../src/types.js';
 import {startFirstPerson} from './helpers/native-start.js';
 
@@ -28,10 +29,22 @@ async function autosave(page:Page,request:APIRequestContext){
   const stored=await readWorld(request);expect(stored.revision).toBe(revision);
   return{snapshot:submitted.snapshot,stored:stored.snapshot,revision};
 }
-async function nativeCrossing(page:Page,x:number,crossed:(x:number)=>boolean){
-  const result=await page.evaluate(driveNativeWaypoint,{target:{x,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
-  console.info('late-wildlife-crossing',JSON.stringify(result));
-  expect(result.reached).toBe(true);expect(crossed(result.x)).toBe(true);
+function markLateWildlifeRequestPhase(){
+  let armed=false,notified=false,wildlifeId='';
+  addEventListener('latticefolk-e2e-wildlife-arm',event=>{armed=true;wildlifeId=(event as CustomEvent<string>).detail;},{once:true});
+  const fetch=window.fetch.bind(window);
+  window.fetch=(input,init)=>{
+    if(!armed||input!=='/api/wildlife/decide'||init?.method!=='POST')return fetch(input,init);
+    const headers=new Headers(init.headers);headers.set('x-latticefolk-e2e-wildlife-phase','armed');
+    const request=fetch(input,{...init,headers});
+    if(!notified&&wildlifeId&&typeof init.body==='string'){
+      const body=JSON.parse(init.body) as {requests:Array<{wildlife:{id:string}}>};
+      if(body.requests.some(item=>item.wildlife.id===wildlifeId)){
+        notified=true;window.dispatchEvent(new CustomEvent('latticefolk-e2e-wildlife-created',{detail:init.body}));
+      }
+    }
+    return request;
+  };
 }
 
 test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.setItem('latticefolk.locale','en'));});
@@ -104,16 +117,19 @@ test('initial world-load deadline starts a usable world but cannot overwrite its
 
 test('late wildlife intent cannot mutate a rematerialized entity or consume its saved cursor',async({page,request},info)=>{
   test.setTimeout(90_000);
+  await page.addInitScript(markLateWildlifeRequestPhase);
+  await page.addInitScript({content:`window.lateWildlifeWaypoint=(${driveNativeWaypoint.toString()});`});
   const chunk:CoarseChunkState={id:'chunk_2_0',cx:2,cz:0,biome:'dryland',settlementLevel:0,population:0,food:0,wood:0,water:0,ecology:0,danger:0,prosperity:0,
     strategy:'sustain',migrationPolicy:'retain',ecologyPolicy:'balance',lastDecisionAt:0,decisionVersion:0,wildlife:[{species:'rabbit',count:1,carryingCapacity:3,health:100}]};
   const rabbit:WildlifeState={id:'rabbit_rng',chunkId:chunk.id,species:'rabbit',position:{x:44,z:5},ageDays:60,health:100,hunger:0,thirst:0,energy:100,
     sex:'male',generation:0,traits:{speed:1,size:.6,fertility:.8,wariness:.7},currentAction:'rest',lastDecisionAt:0,birthDay:1,randomEventCursor:17};
   const seed=snapshot();seed.meta.playerPosition={x:36.2,z:1.2};seed.coarseChunks=[chunk];seed.fineChunks=[{chunkId:chunk.id,npcStates:[],objectStates:[],wildlifeStates:[rabbit]}];await seedWorld(request,seed);
   let captured:Request|undefined,release=()=>{},handled=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;}),finished=new Promise<void>(resolve=>{handled=resolve;});
+  await page.exposeBinding('releaseLateWildlife',()=>{release();});
   await page.route('**/api/decision',route=>route.fulfill({json:idle}));
   await page.route('**/api/wildlife/decide',async route=>{
     const body=route.request().postDataJSON() as WildlifeDecisionBatchRequest;
-    if(captured||!body.requests.some(item=>item.wildlife.id===rabbit.id)){await route.fulfill({status:503,json:{error:'e2e-isolate-late-reply'}});return;}
+    if(route.request().headers()['x-latticefolk-e2e-wildlife-phase']!=='armed'||captured||!body.requests.some(item=>item.wildlife.id===rabbit.id)){await route.fulfill({status:503,json:{error:'e2e-isolate-late-reply'}});return;}
     captured=route.request();expect(body.requests.find(item=>item.wildlife.id===rabbit.id)!.wildlife.randomEventCursor).toBe(17);
     await gate;
     try{await route.fulfill({json:{source:'e2e-late',decisions:[{wildlifeId:rabbit.id,action:'wander',source:'e2e-late',confidence:1,reasonCode:'old-owner'}]}});}
@@ -124,12 +140,12 @@ test('late wildlife intent cannot mutate a rematerialized entity or consume its 
     await expect(status(page)).toHaveAttribute('data-assets-ready','true',{timeout:20_000});
     await expect(status(page)).toHaveAttribute('data-asset-failures','0');
     await startFirstPerson(page);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
-    await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);
-    await nativeCrossing(page,35.2,x=>x<35.7);await expect(status(page)).toHaveAttribute('data-materialized-chunks','0');
-    await nativeCrossing(page,36.2,x=>x>35.8);await expect(status(page)).toHaveAttribute('data-materialized-chunks','1');
+    const transition=await page.evaluate(driveLateWildlifeTransition,{wildlifeId:rabbit.id});
+    expect(transition.outbound.reached).toBe(true);expect(transition.outbound.x<35.7).toBe(true);expect(transition.unloaded).toBe(0);
+    expect(transition.inbound.reached).toBe(true);expect(transition.inbound.x>35.8).toBe(true);expect(transition.materialized).toBe(1);expect(transition.visible).toBe(true);
+    await expect.poll(()=>Boolean(captured),{timeout:20_000}).toBe(true);await finished;const reply=await captured!.response();expect(reply,captured!.failure()?.errorText).not.toBeNull();expect(reply!.status()).toBe(200);expect(await reply!.finished()).toBeNull();
     await expect.poll(()=>status(page).evaluate(el=>(JSON.parse((el as HTMLElement).dataset.streamedLayouts||'[]') as {fineOwners:string[]}[]).flatMap(unit=>unit.fineOwners))).toEqual([chunk.id]);
     await expect.poll(()=>status(page).evaluate(el=>JSON.parse((el as HTMLElement).dataset.wildlifeVisuals||'[]').some((x:{id:string})=>x.id==='rabbit_rng'))).toBe(true);
-    release();await finished;const reply=await captured!.response();expect(reply?.status()).toBe(200);expect(await reply!.finished()).toBeNull();
     await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
     const saved=await autosave(page,request);const current=saved.stored.fineChunks.find(f=>f.chunkId===chunk.id)!.wildlifeStates!.find(w=>w.id===rabbit.id)!;
     expect(current).toMatchObject({id:rabbit.id,randomEventCursor:17,currentAction:'rest'});

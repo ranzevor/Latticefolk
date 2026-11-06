@@ -1,5 +1,5 @@
 {
-  "name": "recorded second-waypoint pre-detour poses",
+  "name": "Second waypoint with actors and tree footprints",
   "start": {
     "x": 11.410584412271563,
     "z": 3.4194155877284294
@@ -148,7 +148,6 @@
       "maxZ": 23.66989436780376
     }
   ],
-  "source": "Main326053cc run37151644584; saved state2026-10-03T20:52:31.863Z immediately before route:0; final DOM tree colliders",
   "callStart": {
     "x": 4.7069,
     "z": 4.1831

@@ -6,7 +6,7 @@ Security fixes currently target the latest `main` branch while Latticefolk is pr
 
 ## Reporting a vulnerability
 
-Please do not publish exploitable vulnerabilities as a public issue. After the GitHub repository is created, use GitHub's private vulnerability reporting feature if enabled, or contact the repository owner through the security contact listed in the repository profile.
+Please do not publish exploitable vulnerabilities as a public issue. Report security vulnerabilities privately to ranzevor@gmail.com.
 
 ## Credential model
 

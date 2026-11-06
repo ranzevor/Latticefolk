@@ -318,7 +318,11 @@ class TownGame {
     ]);
   });
   readonly streamedWildlife=new StreamedActors<WildlifeRuntime>(animal=>{
-    this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.removeFromParent();
+    retireResources([
+      ()=>{this.wildlifePresentation.remove(animal);},
+      ()=>{disposeOwnedMeshResources(animal.mesh);},
+      ()=>{animal.mesh.removeFromParent();}
+    ]);
   });
   assetRoot = '/assets/quaternius';
   assetsReady = false;
@@ -361,6 +365,7 @@ class TownGame {
   persistenceConflict = false;
   persistenceLoadBlocked = false;
   streamedLayoutError?:string;
+  readonly wildlifeRetirementErrors:unknown[]=[];
   lastPersistenceSaveAt = 0;
   wildlifeDecisionPending = false;
   nextWildlifeBatchAt = 0;
@@ -855,7 +860,7 @@ class TownGame {
   }
 
   attachVisualTarget(target:VisualTarget) {
-    // Asset-backed entities must never expose assistant-authored primitive geometry as a visible loading/error fallback.
+    // Asset-backed entities must never expose primitive geometry as a visible loading/error fallback.
     // The semantic group and authoritative physics remain alive while the licensed visual is pending or unavailable.
     target.group.clear();
     this.visualTargets.push(target);
@@ -3101,7 +3106,7 @@ class TownGame {
   }
 
   removeWildlife(animal:WildlifeRuntime,reason:WildlifeDeathReason) {
-    if(animal.removed)return;
+    if(animal.removed||this.wildlife.get(animal.state.id)!==animal)return;
     this.recordWildlifeHabitatExposure(animal.state,true);
     const currentDay=this.day+this.minuteOfDay/1440;
     const record=this.ensureWildlifeLineage(animal.state);
@@ -3118,8 +3123,19 @@ class TownGame {
       this.lineageEpoch++;
     }
     animal.removed=true;
-    if(!this.streamedWildlife.remove(animal)){this.wildlifePresentation.remove(animal);disposeOwnedMeshResources(animal.mesh);animal.mesh.parent?.remove(animal.mesh);}
     this.wildlife.delete(animal.state.id);
+    try{
+      if(!this.streamedWildlife.remove(animal))retireResources([
+        ()=>{this.wildlifePresentation.remove(animal);},
+        ()=>{disposeOwnedMeshResources(animal.mesh);},
+        ()=>{animal.mesh.removeFromParent();}
+      ]);
+    }catch(error){
+      this.wildlifeRetirementErrors.push(error);
+      this.persistenceLoadBlocked=true;this.clearMovablePersistenceQueue();
+      this.streamedLayoutError=error instanceof Error?error.message:String(error);
+      this.log(i18n.t('persistence.loadFailed',{error:this.streamedLayoutError}));
+    }
     this.event(`${this.wildlifeName(animal.state.species)} ${animal.state.id} ${i18n.t(`evolution.death.${reason}`)}。`);
   }
 
@@ -3948,7 +3964,7 @@ class TownGame {
       });
       return count;
     },0);
-    // Read-only evidence, separate from the eight already accepted furniture targets.
+    // Read-only diagnostics, separate from the eight furniture targets.
     // Resolved bounds are diagnostics, not a substitute for first-person screenshot review.
     const ovens=[...this.objects.values()].filter(object=>isBakingOven(object.state)).map(object=>{
       const target=this.visualTargets.find(candidate=>candidate.group===object.mesh&&candidate.asset===BAKING_OVEN_ASSET);
@@ -4056,7 +4072,7 @@ class TownGame {
     ui.world.dataset.playerX=this.playerPosition.x.toFixed(4);
     ui.world.dataset.playerZ=this.playerPosition.z.toFixed(4);
     ui.world.dataset.playerInputSeconds=String(this.playerInputSeconds);
-    ui.world.dataset.simulationClock=JSON.stringify(this.simulationClock.diagnostics);
+    ui.world.dataset.simulationClock=JSON.stringify({...this.simulationClock.diagnostics,pendingInputChanges:this.simulationClock.pendingInputChanges});
     ui.world.dataset.simulationConsumedThrough=String(this.simulationClock.consumedThroughMs??'');
     ui.world.dataset.playerGroundingError=playerGroundingError.toFixed(5);
     ui.world.dataset.npcGroundingMaxError=npcGroundingMaxError.toFixed(5);

@@ -23,6 +23,7 @@ async function view(page: Page) {
     return { ...portable, parcels: portable.parcels as ParcelView[],
       player: { x: Number(data.playerX), z: Number(data.playerZ) },
       revision: Number(data.persistenceRevision), conflict: data.persistenceConflict,
+      assetsReady: data.assetsReady, assetFailures: Number(data.assetFailures),
       materialized: Number(data.materializedChunks), mode: data.cameraMode,
       discovered: Number(data.discoveredChunks) };
   });
@@ -51,7 +52,7 @@ async function open(page: Page) {
   await startFirstPerson(page);
   await page.waitForFunction(() => {
     const data = document.querySelector<HTMLElement>('#worldStatus')?.dataset;
-    return data?.portableObjects && Number(data.persistenceRevision) > 0;
+    return data?.portableObjects && Number(data.persistenceRevision) > 0 && data.assetsReady === 'true';
   }, undefined, {timeout:45_000});
   await expect(page.locator('#worldStatus')).toHaveAttribute('data-asset-failures','0');
 }
@@ -83,10 +84,10 @@ test('home NPC drop has a visible sourced parcel, preserves zero Z on reload and
   const revision = await seed(request, {version:1,
     meta:{day:1,minuteOfDay:495,weather:'clear',playerPosition:{x:10.7,z:0},playerInventory:emptyInventory()},
     coarseChunks:[],fineChunks:[],homeNpcs:[donor],homeObjects:[]});
-  let enabled = false, proposed = false;
+  let enabled = false, proposed = false, armedAfter = Infinity;
   await page.route('**/api/decision', async route => {
     const input = route.request().postDataJSON();
-    if (enabled && !proposed && input.npc.id === donor.id) {
+    if (enabled && !proposed && input.npc.id === donor.id && input.npc.lastDecisionAt > armedAfter) {
       expect(input.allowedActions).toContain('drop_item'); proposed = true;
       await route.fulfill({json:{...idle,action:'drop_item',reasonCode:'parcel-home-drop'} satisfies DecisionResponse});
     } else await route.fulfill({json:idle});
@@ -94,8 +95,11 @@ test('home NPC drop has a visible sourced parcel, preserves zero Z on reload and
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await open(page);
   expect((await view(page)).player).toEqual({x:10.7,z:0});
+  armedAfter = await page.evaluate(() => Date.now());
   enabled = true;
-  const drop = await waitForParcel(page);
+  const drop = await waitForParcel(page).catch(async error => {
+    throw new Error(`Home parcel not visible with rendered children after 45000ms: ${JSON.stringify({enabled,proposed,view:await view(page)})}`, {cause:error});
+  });
   expect(proposed).toBe(true); expect(drop.chunkId).toBe(null);
   expect(drop.count).toBe(1); expect(drop.item).toBe('bread');
   expect(drop.position.x).toBeCloseTo(10.7,8); expect(drop.position.z).toBeCloseTo(-1.4,8);
@@ -140,10 +144,10 @@ test('fine NPC parcel belongs to its source chunk and survives native unload/rev
   await info.attach('fine-parcel-source-route-preconditions', {body:Buffer.from(JSON.stringify(fixture,null,2)),contentType:'application/json'});
   await seed(request, {version:1,meta:{day:1,minuteOfDay:495,weather:'clear',playerPosition:start,playerInventory:emptyInventory()},
     coarseChunks:fixture.coarseChunks,fineChunks:[],homeNpcs:[],homeObjects:[]});
-  let proposed = false;
+  let proposed = false, armedAfter = Infinity;
   await page.route('**/api/decision', async route => {
     const input = route.request().postDataJSON();
-    if (!proposed && input.npc.id === donor.id) {
+    if (!proposed && input.npc.id === donor.id && input.npc.lastDecisionAt > armedAfter) {
       expect(input.npc.position).toEqual({x:donor.x,z:donor.z});
       expect(input.allowedActions).toContain('drop_item'); proposed = true;
       await route.fulfill({json:{...idle,action:'drop_item',reasonCode:'parcel-fine-drop'} satisfies DecisionResponse});
@@ -151,6 +155,7 @@ test('fine NPC parcel belongs to its source chunk and survives native unload/rev
   });
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await open(page);
+  armedAfter = await page.evaluate(() => Date.now());
   const drop = await waitForParcel(page);
   expect(proposed).toBe(true); expect(drop.chunkId).toBe(fine.id); expect(drop.item).toBe('water');
   await expect.poll(async () => {
@@ -256,15 +261,16 @@ test('bounded fine NPC pickup reclaims a dropped parcel once and remains consume
   await seed(request,{version:1,meta:{day:1,minuteOfDay:495,weather:'clear',playerPosition:start,playerInventory:emptyInventory()},
     coarseChunks,fineChunks:[],homeNpcs:[],homeObjects:[]});
   let dropped=false, pickupEnabled=false, picked=false;
+  let dropArmedAfter=Infinity, pickupArmedAfter=Infinity;
   let targetId: string | undefined;
   const proposals: unknown[]=[];
   await page.route('**/api/decision',async route=>{
     const input=route.request().postDataJSON();
     let response=idle;
-    if(input.npc.id===donor.id && !dropped){
+    if(input.npc.id===donor.id && !dropped && input.npc.lastDecisionAt>dropArmedAfter){
       expect(input.allowedActions).toContain('drop_item');dropped=true;
       response={...idle,action:'drop_item',reasonCode:'npc-parcel-drop'};
-    } else if(input.npc.id===donor.id && pickupEnabled && !picked){
+    } else if(input.npc.id===donor.id && pickupEnabled && !picked && input.npc.lastDecisionAt>pickupArmedAfter){
       expect(input.allowedActions).toContain('pickup');
       expect(input.world.nearbyObjects.some((o: WorldObjectState)=>o.id===targetId && o.pickupable)).toBe(true);
       picked=true;response={...idle,action:'pickup',targetObjectId:targetId,reasonCode:'npc-parcel-pickup'};
@@ -274,6 +280,7 @@ test('bounded fine NPC pickup reclaims a dropped parcel once and remains consume
   });
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await open(page);
+  dropArmedAfter=await page.evaluate(()=>Date.now());
   const drop=await waitForParcel(page);targetId=drop.id;
   expect(drop.chunkId).toBe(fine.id);expect(drop.count).toBe(1);expect(drop.item).toBe('water');
   await expect.poll(async()=>{
@@ -283,6 +290,7 @@ test('bounded fine NPC pickup reclaims a dropped parcel once and remains consume
   const before=await saved(request);
   await lookForObject(page,'Parcel',0,.82);
   await info.attach('npc-parcel-visible-before-pickup',{body:await page.screenshot(),contentType:'image/png'});
+  pickupArmedAfter=await page.evaluate(()=>Date.now());
   pickupEnabled=true;
   await expect.poll(async()=>{
     const c=(await saved(request)).snapshot.fineChunks.find(c=>c.chunkId===fine.id);

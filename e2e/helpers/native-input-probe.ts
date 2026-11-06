@@ -91,15 +91,6 @@ export const test=base.extend<{nativeInputProbe:void}>({nativeInputProbe:[async(
   });
   try{await use();}finally{
     if(!page.isClosed())await session.detach().catch(error=>{report.errors.push(String(error));});
-    const routes=report.routes.slice(-4).map(value=>{
-      const route=value as {routeId:string;route:unknown;startedAt:number;finishedAt:number;startState:unknown;final:unknown;
-        keys:unknown[];frames:unknown[];truncatedKeys:number;truncatedFrames:number;held:string[]};
-      return {...route,keys:route.keys.slice(-16),frames:route.frames.slice(-16),
-        omittedKeys:Math.max(0,route.keys.length-16),omittedFrames:Math.max(0,route.frames.length-16)};
-    });
-    const summary=JSON.stringify({test:report.test,routes,pulses:report.pulses.slice(-12),errors:report.errors.slice(-8)});
-    if(Buffer.byteLength(summary)<=64*1024)console.info('native-input-summary',summary);
-    else console.info('native-input-summary',JSON.stringify({test:report.test,summaryOmitted:true,bytes:Buffer.byteLength(summary)}));
     await info.attach('independent-native-input-probe',{body:Buffer.from(JSON.stringify(report,null,2)),contentType:'application/json'});
   }
 },{auto:true}]});

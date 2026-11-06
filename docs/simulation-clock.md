@@ -32,11 +32,35 @@ actual attempted physical steps, including collision-blocked attempts.
 ## Validation controls
 
 Waypoint and parcel routes issue finite keyboard pulses using elapsed browser
-time, then observe the rendered position after pending simulation time reaches
-zero. Pulse duration uses the remaining distance and unchanged movement speed.
-Release delays count as actual input. Catch-up time stays inside the original
-route deadline; failures retain input-duration and pending-time diagnostics.
-The controlled route tests run the production clock and collision solver.
+time. Pulse duration uses the remaining distance and unchanged movement speed.
+Release delays count as actual input. Catch-up stays inside the original route
+deadline, and waypoint direction-input budgets remain cumulative across pulses,
+including collision-blocked attempts.
+
+Waypoint and coarse-boundary checks require a fresh clock HUD publication after
+the pulse keys are released and `pendingInputChanges === 0`. Native pulse release
+boundaries must also be covered by `simulationConsumedThrough`; coarse-boundary
+checks match the returned boundary to the observed trusted key releases and
+require the corresponding materialization state. A HUD publication time or the
+original event timestamp alone does not prove completion: late accepted input
+can be retimed beyond that timestamp. Missing or invalid required clock, release
+or consumed-boundary evidence cannot establish completion. Unrelated world-time
+debt may remain positive. Each waypoint route and coarse-crossing leg keeps its
+original deadline; waiting for release consumption does not renew it.
+
+Parcel traversal requires both `pendingSeconds === 0` and
+`pendingInputChanges === 0` before movement and after each pulse. Pulse completion
+also requires a fresh HUD publication after the corresponding trusted keyup,
+a matching returned release boundary and `simulationConsumedThrough` covering
+that boundary. Its complete route retains the 90 s deadline.
+
+Released-player-frame observations begin after key release and require a new
+HUD publication, a post-request animation-frame timestamp, finite position/input
+samples and both zero pending world time and `pendingInputChanges === 0` within
+the default 20 s timeout. Movement keydown/keyup events discard earlier mutation
+records and require a new HUD publication. Missing or malformed required clock
+fields fail closed. Route failures retain input-duration and clock diagnostics.
+Controlled route tests run the production clock and collision solver.
 
 Wildlife resource selection, accepted proposals and completed actions share one
 resource-compatibility predicate. Water and stone are not food targets; drinking
@@ -44,28 +68,19 @@ still accepts water. Completion rechecks targets that changed or disappeared.
 
 ## Verification
 
-The initial draft head `8a152303da32747d8db0c122b14b3d4f14d77b53` passed all
-1,251 deterministic tests and the build in [run 38028059045](https://github.com/wangfumin1/Latticefolk/actions/runs/38028059045).
-Its native-input browser case recorded a trusted 456.7 ms key hold, 456.7 ms of
-attempted movement and 2.0552 m displacement at 4.5 m/s, with no remaining debt,
-input overflow or page errors. The three sampled frames had intervals of 447 ms
-and 238.3 ms. This small sample establishes input response in that run, not a
-scene-wide performance result.
+Run the deterministic suite with `node --import tsx --test tests/*.test.ts` and
+TypeScript checks with `npm run typecheck`.
 
-That run executed all 30 browser cases: group A passed 9/11 and group B passed
-15/19. Four failures exposed frame-count-based navigation, one exposed an
-incompatible food target, and one mixed a stale-response check with a subsequent
-valid response. The revised controls preserve their original targets, deadlines,
-input budgets and resource assertions.
+Clock and runtime coverage starts in `tests/simulation-clock.test.ts`,
+`tests/simulation-frame-boundary.test.ts`,
+`tests/simulation-consumed-boundary.test.ts` and
+`tests/player-clock-runtime.test.ts`. These cover bounded foreground catch-up,
+between-frame key edges, late-event ordering, cancellation, overflow recovery
+and input debt independent of world-time debt. Runtime fixtures construct
+TownGame and drive DOM input, PointerLockControls, animate and production
+collision, with rendering and pre-boot consumers supplied as test doubles.
 
-Local validation of the revised candidate passes 1,273 deterministic cases,
-TypeScript checks, the production build, strict E2E typechecking and discovery
-of all 30 browser cases. The test command is
-`node --import tsx --test tests/*.test.ts`.
-
-The 39 original clock/runtime cases cover actual TownGame construction, DOM
-input, PointerLockControls, animate and collision; 1 FPS versus 20 FPS; an 800 ms
-between-frame press; 5-second foreground gaps; interruption and overflow recovery.
-Rendering and pre-boot world consumers are controlled test doubles. Local browser
-startup is blocked by socket permissions. The revised head still requires its
-natural full Chromium/WebGL run and exact-head artifact review.
+Route and release-consumption cases are in `tests/native-waypoint.test.ts`,
+`tests/native-waypoint-release-frame.test.ts`, `tests/parcel-route-clock.test.ts`
+and `tests/coarse-native-transition.test.ts`. Chromium/WebGL gameplay coverage
+runs with `npm run test:e2e`.

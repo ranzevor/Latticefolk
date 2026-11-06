@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { resolveWildlifeAsset } from './wildlifeAssetResolver';
 import { applyRaccoonAppearance, type RaccoonAppearance } from './raccoonAppearance';
+import { retireResources } from './retireResources.js';
 
 export type WildlifeVisualAction = 'idle' | 'walk' | 'run' | 'eat' | 'death';
 
@@ -38,6 +39,21 @@ interface InstanceState {
 }
 
 const REQUIRED_ACTIONS: WildlifeVisualAction[] = ['idle', 'walk', 'run', 'eat', 'death'];
+
+function retireInstanceResources(
+  root: THREE.Object3D, mixer: THREE.AnimationMixer | undefined,
+  actions: Iterable<THREE.AnimationAction>, skeletons: Iterable<THREE.Skeleton>,
+  geometries: Iterable<THREE.BufferGeometry>,
+): void {
+  retireResources([
+    ...[...actions].map(action => () => { action.stop(); }),
+    () => { mixer?.stopAllAction(); },
+    () => { mixer?.uncacheRoot(root); },
+    ...[...skeletons].map(skeleton => () => { skeleton.dispose(); }),
+    ...[...geometries].map(geometry => () => { geometry.dispose(); }),
+    () => { root.removeFromParent(); },
+  ]);
+}
 
 export class WildlifeVisualRuntime {
   private readonly cache = new Map<string, CachedAsset>();
@@ -98,28 +114,34 @@ export class WildlifeVisualRuntime {
       const mesh = object as THREE.SkinnedMesh;
       if (mesh.isSkinnedMesh && mesh.skeleton) ownedSkeletons.add(mesh.skeleton);
     });
-    let adapted;
+    let ownedGeometries = new Set<THREE.BufferGeometry>();
+    let mixer: THREE.AnimationMixer | undefined;
+    const actions = new Map<string, THREE.AnimationAction>();
     try {
-      adapted = species === 'raccoon' && appearance
+      const adapted = species === 'raccoon' && appearance
         ? applyRaccoonAppearance(root, asset.animations ?? [], appearance)
         : { animations: asset.animations ?? [], geometries: new Set<THREE.BufferGeometry>() };
+      ownedGeometries = adapted.geometries;
+      root.scale.setScalar(scale);
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(root);
+      root.position.y = groundHeight - box.min.y;
+      mixer = new THREE.AnimationMixer(root);
+      const clips = resolveWildlifeAsset(species).definition?.clips ?? {};
+      for (const [key, name] of Object.entries(clips)) {
+        const clip = adapted.animations.find(item => item.name === name);
+        if (clip) actions.set(key, mixer.clipAction(clip));
+      }
+      this.instances.set(root, { mixer, actions, death: false, ownedSkeletons, ownedGeometries });
+      return root;
     } catch (error) {
-      for (const skeleton of ownedSkeletons) skeleton.dispose();
+      try {
+        retireInstanceResources(root, mixer, actions.values(), ownedSkeletons, ownedGeometries);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Wildlife instance creation failed');
+      }
       throw error;
     }
-    root.scale.setScalar(scale);
-    root.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(root);
-    root.position.y = groundHeight - box.min.y;
-    const mixer = new THREE.AnimationMixer(root);
-    const actions = new Map<string, THREE.AnimationAction>();
-    const clips = resolveWildlifeAsset(species).definition?.clips ?? {};
-    for (const [key, name] of Object.entries(clips)) {
-      const clip = adapted.animations.find(item => item.name === name);
-      if (clip) actions.set(key, mixer.clipAction(clip));
-    }
-    this.instances.set(root, { mixer, actions, death: false, ownedSkeletons, ownedGeometries: adapted.geometries });
-    return root;
   }
 
   play(root: THREE.Object3D, action: WildlifeVisualAction): boolean {
@@ -149,13 +171,8 @@ export class WildlifeVisualRuntime {
   dispose(root: THREE.Object3D): void {
     const instance = this.instances.get(root);
     if (!instance) return;
-    for (const action of instance.actions.values()) action.stop();
-    instance.mixer.stopAllAction();
-    instance.mixer.uncacheRoot(root);
-    for (const skeleton of instance.ownedSkeletons) skeleton.dispose();
-    for (const geometry of instance.ownedGeometries) geometry.dispose();
     this.instances.delete(root);
-    root.removeFromParent();
+    retireInstanceResources(root, instance.mixer, instance.actions.values(), instance.ownedSkeletons, instance.ownedGeometries);
   }
 }
 

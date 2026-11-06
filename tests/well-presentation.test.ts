@@ -11,6 +11,7 @@ import {normalizeLegacyWell} from '../scripts/lib/well-materials.mjs';
 import {prepareWellGeometry} from '../src/scene/wellPresentation.js';
 import {StreamedPresentation} from '../src/scene/streamedPresentation.js';
 import {farmCropRows,disposeFarmCropRows} from '../src/scene/farmCrops.js';
+import {retireResources} from '../src/scene/retireResources.js';
 
 const well=()=>new FBXLoader().parse(Uint8Array.from(normalizeLegacyWell(fs.readFileSync(
   new URL('../public/assets/quaternius/medieval-village/Well.source.fbx',import.meta.url)))).buffer,'');
@@ -19,10 +20,10 @@ const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
 const game=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='TownGame') as ts.ClassDeclaration;
 const method=(name:string)=>game.members.find(n=>n.name?.getText(ast)===name)!.getText(ast);
-const Runtime=new Function('prepareVisualPrograms','prepareVisualShadows','THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows',
+const Runtime=new Function('prepareVisualPrograms','prepareVisualShadows','THREE','prepareWellGeometry','StreamedPresentation','farmCropRows','disposeFarmCropRows','retireResources',
   'WATER_PATCH_ASSET','BAKING_OVEN_ASSET',ts.transpileModule(`return class Runtime {objects=new Map();${[
     'streamedPresentation','loadVisualAssets','normalizeModel','pickEntity','applyVisualTarget','attachVisualTarget'].map(method).join('\n')}}`,
-  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(prepareVisualPrograms,prepareVisualShadows,THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,'waterPatch','bakingOven');
+  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(prepareVisualPrograms,prepareVisualShadows,THREE,prepareWellGeometry,StreamedPresentation,farmCropRows,disposeFarmCropRows,retireResources,'waterPatch','bakingOven');
 
 function triangles(geometry:THREE.BufferGeometry){
   const rows:string[]=[];

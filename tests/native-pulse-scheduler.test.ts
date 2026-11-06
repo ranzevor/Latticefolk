@@ -81,12 +81,12 @@ const source=fs.readFileSync(new URL('../e2e/helpers/native-waypoint.ts',import.
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function driveNativeWaypoint','async function driveNativeWaypoint')+'\ndriveNativeWaypoint;';
 test('a native pulse already reflected in diagnostics is confirmed by a fresh release frame',async()=>{
- let x=0,inputSeconds=0,finished=0,frames=0;const observers=new Set<()=>void>();
- const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?String(x):key==='playerZ'?'0':key==='playerInputSeconds'?String(inputSeconds):key==='simulationClock'?JSON.stringify({pendingSeconds:0}):'[]'});
- const context={performance:{now:()=>100,timeOrigin:100000},setTimeout,clearTimeout,cancelAnimationFrame(){},
-  MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}disconnect(){observers.delete(this.notify);}},
+ let x=0,inputSeconds=0,finished=0,frames=0;const observers=new Set<()=>void>(),keyups=new Set<(event:{code:string})=>void>();
+ const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?String(x):key==='playerZ'?'0':key==='playerInputSeconds'?String(inputSeconds):key==='simulationClock'?JSON.stringify({pendingSeconds:0,pendingInputChanges:0}):'[]'});
+ const context={addEventListener:(type:string,listener:(event:{code:string})=>void)=>{if(type==='keyup')keyups.add(listener);},removeEventListener:(type:string,listener:(event:{code:string})=>void)=>{if(type==='keyup')keyups.delete(listener);},performance:{now:()=>100,timeOrigin:100000},setTimeout,clearTimeout,cancelAnimationFrame(){},
+  MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}takeRecords(){return [];}disconnect(){observers.delete(this.notify);}},
   requestAnimationFrame(callback:(at:number)=>void){frames++;setImmediate(()=>{for(const notify of observers)notify();callback(100);});return frames;},
-  window:{nativeInputProbe:{start(){},async pulse(){x=1;inputSeconds=1/4.5;},async finish(){finished++;}},dispatchEvent(){throw Error('unexpected synthetic key');}},
+  window:{nativeInputProbe:{start(){},async pulse(){x=1;inputSeconds=1/4.5;for(const listener of keyups)listener({code:'KeyD'});},async finish(){finished++;}},dispatchEvent(){throw Error('unexpected synthetic key');}},
   document:{pointerLockElement:canvas,querySelector:(s:string)=>s==='#game canvas'?canvas:{dataset}}};
  const result=await vm.runInNewContext(callback,context)({target:{x:1,z:0},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
  assert.equal(result.reached,true);assert.equal(result.inputSeconds,1/4.5);assert.equal(finished,1);assert.equal(frames,1);assert.equal(observers.size,0);
@@ -94,7 +94,7 @@ test('a native pulse already reflected in diagnostics is confirmed by a fresh re
 async function probeRoute(options:{releaseDelay?:number;fail?:boolean}={}){
   let x=34,finished=0;const observers=new Set<()=>void>();const starts:unknown[]=[],pulses:NativePulseRequest[]=[];
   const clock=nativeInputClock({frameMs:500,onStep:(dt,keys)=>{x+=(Number(keys.has('KeyD'))-Number(keys.has('KeyA')))*(keys.has('ShiftLeft')?7.2:4.5)*dt;}});
-  const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?x.toFixed(4):key==='playerZ'?'0':key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):'[]'});
+  const canvas={},dataset=new Proxy({},{get:(_,key)=>key==='playerX'?x.toFixed(4):key==='playerZ'?'0':key==='playerInputSeconds'?String(clock.inputSeconds):key==='simulationClock'?JSON.stringify({...clock.clock.diagnostics,pendingInputChanges:clock.clock.pendingInputChanges}):'[]'});
   const probe={start:(route:unknown)=>{starts.push(route);},finish:async()=>{finished++;},pulse:async(request:NativePulseRequest)=>{
     pulses.push(request);if(options.fail)throw Error('native dispatch rejected');
     for(const code of request.codes)clock.context.window.dispatchEvent({type:'keydown',code});
@@ -103,7 +103,7 @@ async function probeRoute(options:{releaseDelay?:number;fail?:boolean}={}){
     },request.durationMs+(options.releaseDelay??0)));
   }};
   const context={...clock.context,performance:{now:()=>clock.time,timeOrigin:100_000},
-    MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}disconnect(){observers.delete(this.notify);}},
+    MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}takeRecords(){return [];}disconnect(){observers.delete(this.notify);}},
     requestAnimationFrame:(callback:(at:number)=>void)=>clock.context.requestAnimationFrame(()=>{for(const notify of observers)notify();callback(clock.time);}),
     window:{nativeInputProbe:probe,dispatchEvent:()=>{throw Error('probe must not synthesize page keyboard input');}},
     document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}}};
@@ -138,7 +138,7 @@ const install=ts.transpileModule(`const install=${installSource};install;`,{comp
 for(const invalid of [false,true])test(`controlled browser collector retains original event and handler timestamps${invalid?' and rejects untrusted input':''}`,async()=>{
   let time=10,nextId=0;
   const listeners=new Map<string,(event:unknown)=>void>(),frames=new Map<number,(at:number)=>void>(),reports:any[]=[];
-  const dataset=Object.freeze({playerX:'34',playerZ:'0',playerInputSeconds:'0',simulationClock:'{"pendingSeconds":0}'});
+  const dataset=Object.freeze({playerX:'34',playerZ:'0',playerInputSeconds:'0',simulationClock:'{"pendingSeconds":0,"pendingInputChanges":0}'});
   const root:any={__latticeNativePulse:async()=>{},__latticeNativeProbeRecord:async(value:unknown)=>{reports.push(value);}};
   const context={window:root,performance:{timeOrigin:1000,now:()=>time},
     document:{querySelector:()=>({dataset}),hasFocus:()=>true,hidden:false},

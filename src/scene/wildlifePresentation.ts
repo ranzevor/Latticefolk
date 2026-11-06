@@ -3,6 +3,7 @@ import { WildlifeVisualRuntime, type WildlifeVisualAction } from './wildlifeVisu
 import type { WildlifeState } from '../types';
 import { normalizeWildlifePhenotype } from '../world/wildlifePhenotype';
 import { normalizeWildlifeOrganismGenome } from '../world/organismFamilies';
+import { retireResources } from './retireResources.js';
 
 type WildlifeOwnerState = Pick<WildlifeState, 'id' | 'species' | 'traits' | 'phenotype' | 'organismGenome'>;
 
@@ -22,6 +23,7 @@ export interface WildlifePresentationDiagnostics {
   id: string;
   status: 'pending' | 'ready' | 'failed';
   reason?: string;
+  error?: unknown;
 }
 
 interface Binding {
@@ -31,6 +33,7 @@ interface Binding {
   visual?: THREE.Object3D;
   status: 'pending' | 'ready' | 'failed';
   reason?: string;
+  error?: unknown;
   lastAction?: WildlifeVisualAction;
 }
 
@@ -66,6 +69,7 @@ function actionFor(input: WildlifePresentationUpdate): WildlifeVisualAction {
 
 export class WildlifePresentation {
   private readonly bindings = new Map<string, Binding>();
+  private readonly attachmentFailures: WildlifePresentationDiagnostics[] = [];
 
   constructor(private readonly runtime: WildlifeVisualRuntime) {}
 
@@ -74,7 +78,11 @@ export class WildlifePresentation {
 
     const current = this.bindings.get(owner.state.id);
     if (current?.owner === owner) return;
-    if (current) this.disposeBinding(current);
+    if (current) {
+      this.bindings.delete(owner.state.id);
+      this.disposeBinding(current);
+      if (this.bindings.has(owner.state.id)) return;
+    }
 
     const binding: Binding = { owner, token: {}, status: 'pending' };
     this.bindings.set(owner.state.id, binding);
@@ -109,7 +117,11 @@ export class WildlifePresentation {
   }
 
   getDiagnostics(): WildlifePresentationDiagnostics[] {
-    return [...this.bindings].map(([id, binding]) => ({ id, status: binding.status, reason: binding.reason }));
+    return [...this.bindings].map(([id, binding]) => ({ id, status: binding.status, reason: binding.reason, error: binding.error }));
+  }
+
+  getAttachmentFailures(): WildlifePresentationDiagnostics[] {
+    return this.attachmentFailures.map(failure => ({ ...failure }));
   }
 
   getDiagnosticsSummary(): {pending:number;ready:number;failed:number;count:number} {
@@ -127,14 +139,13 @@ export class WildlifePresentation {
   }
 
   private disposeBinding(binding: Binding): void {
-    if (binding.visual) {
-      this.runtime.dispose(binding.visual);
-      binding.visual = undefined;
-    }
-    if (binding.container) {
-      binding.container.removeFromParent();
-      binding.container = undefined;
-    }
+    const { visual, container } = binding;
+    binding.visual = undefined;
+    binding.container = undefined;
+    retireResources([
+      () => { if (visual) this.runtime.dispose(visual); },
+      () => { container?.removeFromParent(); },
+    ]);
   }
 
   private async attach(binding: Binding): Promise<void> {
@@ -155,6 +166,10 @@ export class WildlifePresentation {
         phenotype: normalizeWildlifePhenotype(state.phenotype, state.id),
         genome: normalizeWildlifeOrganismGenome(state.species, state.organismGenome, state.id),
       });
+      if (this.bindings.get(binding.owner.state.id) !== binding) {
+        if (visual) this.runtime.dispose(visual);
+        return;
+      }
       if (!visual) {
         binding.status = 'failed';
         binding.reason = `unable to create ${binding.owner.state.species} visual`;
@@ -174,14 +189,24 @@ export class WildlifePresentation {
       presentationRoot.name = 'wildlife-presentation-ground0';
       binding.container = presentationRoot;
       presentationRoot.add(visual);
+      if (this.bindings.get(binding.owner.state.id) !== binding) return;
       binding.owner.mesh.add(presentationRoot);
+      if (this.bindings.get(binding.owner.state.id) !== binding) return;
 
       binding.status = 'ready';
     } catch (error) {
-      if (this.bindings.get(binding.owner.state.id) !== binding) return;
-      this.disposeBinding(binding);
       binding.status = 'failed';
+      binding.error = error;
       binding.reason = error instanceof Error ? error.message : String(error);
+      try {
+        this.disposeBinding(binding);
+      } catch (cleanupError) {
+        binding.error = new AggregateError([error, cleanupError], 'Wildlife presentation creation failed');
+        binding.reason += `; cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+      }
+      if (this.bindings.get(binding.owner.state.id) !== binding) {
+        this.attachmentFailures.push({ id: binding.owner.state.id, status: 'failed', reason: binding.reason, error: binding.error });
+      }
     }
   }
 }

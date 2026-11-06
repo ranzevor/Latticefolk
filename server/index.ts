@@ -8,6 +8,7 @@ import { DialogueStore } from './dialogueStore.js';
 import { createDecisionProvider } from './decision/createProvider.js';
 import { WorldPersistence } from './worldPersistence.js';
 import { registerWorldStateRoutes } from './worldStateRoutes.js';
+import { registerStaticFiles } from './staticFiles.js';
 import type { DecisionRequest, DialogueRequest, ImportDialogueRequest, ChunkDecisionRequest, RegionDecisionRequest, WorldDecisionRequest, WildlifeDecisionBatchRequest } from '../src/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -153,8 +154,7 @@ app.post('/api/dialogue', async (req, res) => {
 
 const dist = path.join(root, 'dist');
 if (process.env.NODE_ENV === 'production' && fs.existsSync(dist)) {
-  app.use(express.static(dist));
-  app.get('*splat', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
+  registerStaticFiles(app,dist);
 }
 
 const port = Number(process.env.PORT || 8787);
