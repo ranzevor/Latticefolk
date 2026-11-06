@@ -285,6 +285,30 @@ test('wildlife batch accepts each requested ID once and rejects unrequested IDs'
   const d={wildlifeId:'w',action:'wander',source:'fallback',confidence:1,reasonCode:'test'};f.io.reply={decisions:[{...d,wildlifeId:'other'},d,d]};
   await f.runtime.requestWildlifeBatch();assert.equal(a.state.randomEventCursor,18);assert.equal(unrequested.state.randomEventCursor,17);assert.deepEqual(unrequested.path,[]);
 });
+for(const elapsed of [7999,8000])test(`rematerialized wildlife keeps its saved cursor when the old reply arrives at ${elapsed}ms`,async()=>{
+  const f=fixture();
+  const chunk={id:'chunk_2_0',cx:2,cz:0,biome:'dryland',settlementLevel:0,population:0,food:0,wood:0,water:0,ecology:0,danger:0,prosperity:0,
+    strategy:'sustain',migrationPolicy:'retain',ecologyPolicy:'balance',lastDecisionAt:0,decisionVersion:0,wildlife:[{species:'rabbit',count:1,carryingCapacity:3,health:100}]};
+  f.runtime.coarseWorld.chunks.set(chunk.id,chunk);
+  f.runtime.fineChunkCache.set(chunk.id,{npcStates:[],objectStates:[],wildlifeStates:[wildlife({position:{x:44,z:5},hunger:0,thirst:0,energy:100})]});
+  f.runtime.materializeFineChunk(chunk);const old=f.runtime.wildlife.get('w');old.nextDecisionAt=0;
+  const reply=deferred<any>();f.io.wait=reply.promise;const pending=f.runtime.requestWildlifeBatch();
+  const deadline=[...f.io.timers.values()].find(timer=>timer.delay===8000)!;assert.ok(deadline);
+  f.io.clock+=250;f.runtime.collapseFineChunk(chunk.id);assert.equal(old.removed,true);assert.equal(f.runtime.wildlife.has('w'),false);
+  f.io.clock+=250;f.runtime.materializeFineChunk(chunk);const current=f.runtime.wildlife.get('w');
+  assert.notEqual(current,old);assert.equal(current.mesh,old.mesh);assert.equal(f.io.signals[0].aborted,false);
+  const state=structuredClone(current.state),next=current.nextDecisionAt;
+  f.io.clock=1000+elapsed;
+  if(elapsed===8000){deadline.callback();await pending;assert.equal(f.io.signals[0].aborted,true);}
+  const response=new Response(JSON.stringify({decisions:[{wildlifeId:'w',action:'wander',source:'fallback',confidence:1,reasonCode:'old-owner'}]}),{status:200});
+  reply.resolve(response);await pending;for(let i=0;i<12;i++)await Promise.resolve();
+  assert.equal(response.bodyUsed,elapsed<8000);assert.equal(f.io.signals[0].aborted,elapsed===8000);
+  assert.deepEqual(current.state,state);assert.equal(current.nextDecisionAt,next);assert.equal(current.state.randomEventCursor,17);assert.equal(current.state.currentAction,'rest');
+  assert.equal(f.runtime.wildlifeDecisionPending,false);assert.equal(f.io.timers.size,0);
+  const saved=f.runtime.buildWorldSnapshot();assert.deepEqual(saved.fineChunks.find((x:any)=>x.chunkId===chunk.id).wildlifeStates,[state]);
+  const restored=fixture();restored.runtime.restoreWorldState(saved);restored.runtime.coarseWorld.chunks.set(chunk.id,structuredClone(saved.coarseChunks.find((x:any)=>x.id===chunk.id)));restored.runtime.materializeFineChunk(restored.runtime.coarseWorld.chunks.get(chunk.id));
+  assert.equal(restored.runtime.wildlife.get('w').state.randomEventCursor,17);assert.equal(restored.runtime.wildlife.get('w').state.currentAction,'rest');
+});
 test('ordinary movement and need drift do not invalidate an otherwise current wildlife response',async()=>{
   const f=fixture(),a=animalRuntime();f.runtime.wildlife.set('w',a);const reply=deferred<any>();f.io.wait=reply.promise;const pending=f.runtime.requestWildlifeBatch();
   a.state.position.x+=.5;a.state.hunger+=.01;a.state.energy-=.01;
