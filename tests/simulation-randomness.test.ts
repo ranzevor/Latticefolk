@@ -368,7 +368,11 @@ for(const declaration of ast.statements)if(ts.isClassDeclaration(declaration)&&d
     if(ts.isExpressionStatement(statement)&&ts.isBinaryExpression(statement.expression)&&['simulationClock','simulationConsumedThrough','playerInputSeconds','playerX','playerZ'].some(key=>(statement.expression as ts.BinaryExpression).left.getText(ast)===`ui.world.dataset.${key}`))clockPublication.push(statement.getText(ast));
 assert.equal(clockPublication.length,5);
 
-for(const batched of [false,true])test(`serialized late wildlife consumer completes real HTTP before deadline with ${batched?'batched':'prompt'} native delivery`,{timeout:15_000},async()=>{
+for(const {batched,recordDelay,label} of [
+  {batched:false,recordDelay:125,label:'prompt native delivery'},
+  {batched:true,recordDelay:125,label:'batched native delivery'},
+  {batched:false,recordDelay:4500,label:'delayed native trace recording'}
+])test(`serialized late wildlife consumer completes real HTTP before deadline with ${label}`,{timeout:15_000},async()=>{
   const f=fixture(random.DEFAULT_WORLD_SEED,true),runtime=f.runtime;
   const chunk={id:'chunk_2_0',cx:2,cz:0,biome:'dryland',settlementLevel:0,population:0,food:0,wood:0,water:0,ecology:0,danger:0,prosperity:0,
     strategy:'sustain',migrationPolicy:'retain',ecologyPolicy:'balance',lastDecisionAt:0,decisionVersion:0,wildlife:[{species:'rabbit',count:1,carryingCapacity:3,health:100}]};
@@ -381,13 +385,14 @@ for(const batched of [false,true])test(`serialized late wildlife consumer comple
   runtime.wildlifeSnapshot=(animal:any)=>({wildlife:structuredClone(animal.state)});
   runtime.camera.position.set(36.2,1.7,1.2);runtime.controls.isLocked=true;runtime.materializeFineChunk(chunk);f.hidden.add('hidden');
   const old=runtime.wildlife.get('rabbit_rng');old.nextDecisionAt=0;
-  const gate=deferred<void>(),routed=deferred<void>();let routeError:unknown,routeSeen=false,serverFinished=false,response:Response|undefined;
+  const gate=deferred<void>(),routed=deferred<void>();let routeError:unknown,routeSeen=false,serverFinished=false,response:Response|undefined,responseReceivedAt=Infinity,gateOpenedAt=Infinity,recordStartedAt=Infinity,recordedAt=Infinity;
   const server=http.createServer(async(request,reply)=>{
     try{
       let body='';for await(const part of request)body+=String(part);
       assert.equal(request.method,'POST');assert.equal(request.url,'/api/wildlife/decide');assert.equal(request.headers['x-latticefolk-e2e-wildlife-phase'],'armed');
       const animal=JSON.parse(body).requests.find((row:any)=>row.wildlife.id==='rabbit_rng');assert.equal(animal.wildlife.randomEventCursor,17);
       routeSeen=true;await sleep(200);await gate.promise;
+      assert.equal(reply.destroyed,false,'late reply transport must remain open through rematerialization');
       const finished=once(reply,'finish');reply.writeHead(200,{'content-type':'application/json'});reply.end(JSON.stringify({decisions:[{wildlifeId:'rabbit_rng',action:'wander',source:'late',confidence:1,reasonCode:'old-owner'}]}));
       await finished;serverFinished=true;
     }catch(error){routeError=error;if(!reply.destroyed){reply.statusCode=500;reply.end();}}
@@ -399,8 +404,12 @@ for(const batched of [false,true])test(`serialized late wildlife consumer comple
   const deliveries:Array<()=>void>=[],canvas={},world={dataset:{} as Record<string,string>};
   const publish=new Function('ui',ts.transpileModule(`return function(){${clockPublication.join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)({world});
   const updateHud=()=>{publish.call(runtime);world.dataset.materializedChunks=String(runtime.materializedChunks.size);world.dataset.characterSoles='[]';world.dataset.treePresentation='[]';world.dataset.wildlifeVisuals=JSON.stringify([...runtime.wildlife.values()].filter((animal:any)=>!animal.removed).map((animal:any)=>({id:animal.state.id})));for(const notify of observers)notify();};
-  const root:any={fetch:(url:string,init:RequestInit)=>globalThis.fetch(`http://127.0.0.1:${address.port}${url}`,init).then(value=>{response=value;return value;}),dispatchEvent:events.dispatchEvent.bind(events),
-    releaseLateWildlife:async()=>{await sleep(1250);gate.resolve();},__latticeNativeProbeRecord:async(value:unknown)=>{await sleep(125);reports.push(value);},
+  const root:any={fetch:(url:string,init:RequestInit)=>globalThis.fetch(`http://127.0.0.1:${address.port}${url}`,init).then(value=>{response=value;responseReceivedAt=performance.now();return value;}),dispatchEvent:events.dispatchEvent.bind(events),
+    releaseLateWildlife:async()=>{await sleep(1250);gateOpenedAt=performance.now();gate.resolve();},__latticeNativeProbeRecord:async(value:unknown)=>{
+      recordStartedAt=performance.now();await sleep(recordDelay);
+      if(recordDelay>1000){assert.equal(response?.bodyUsed,true);assert.equal(runtime.wildlifeDecisionPending,false);assert.equal(f.io.signals[0].aborted,false);}
+      reports.push(value);recordedAt=performance.now();
+    },
     __latticeNativePulse:async(request:any)=>{
       assert.equal(runtime.simulationClock.pendingInputChanges,0,'each pulse must follow complete consumption of its predecessor');
       pulses.push(request);
@@ -430,14 +439,16 @@ for(const batched of [false,true])test(`serialized late wildlife consumer comple
     assert.equal(routeError,undefined);assert.equal(frameError,undefined);assert.equal(routeSeen,true);assert.equal(serverFinished,true);assert.equal(response?.status,200);assert.equal(response.bodyUsed,true);assert.equal(f.io.signals[0].aborted,false);
     assert.deepEqual(transitions,[0,1]);assert.equal(result.unloaded,0);assert.equal(result.materialized,1);assert.equal(result.visible,true);assert.ok(result.releasedAt-result.requestCreated<8000);
     assert.ok(result.outbound.x<35.7);assert.ok(result.inbound.x>35.8);assert.ok(result.outbound.inputSeconds<=2);assert.ok(result.inbound.inputSeconds<=2);
-    assert.equal(reports.length,2);assert.ok(reports.every(report=>report.held.length===0&&report.keys.every((key:any)=>key.trusted)));assert.equal(pulses.length,2);
+    assert.equal(reports.length,1);assert.ok(gateOpenedAt<=recordStartedAt);if(recordDelay>1000)assert.ok(responseReceivedAt<recordedAt);
+    assert.deepEqual(JSON.parse(JSON.stringify(reports[0].keys.map((key:any)=>[key.type,key.code]))),[['keydown','KeyA'],['keyup','KeyA'],['keydown','KeyD'],['keyup','KeyD']]);
+    assert.equal(reports[0].route.legs.length,2);assert.ok(reports.every(report=>report.held.length===0&&report.keys.every((key:any)=>key.trusted)));assert.equal(pulses.length,2);
     const current=runtime.wildlife.get('rabbit_rng');assert.notEqual(current,old);assert.equal(current.mesh,old.mesh);assert.equal(old.removed,true);assert.equal(current.state.randomEventCursor,17);assert.equal(current.state.currentAction,'rest');
     const saved=runtime.buildWorldSnapshot();assert.equal(saved.fineChunks.find((row:any)=>row.chunkId===chunk.id)!.wildlifeStates![0].randomEventCursor,17);assert.equal(saved.fineChunks.find((row:any)=>row.chunkId===chunk.id)!.wildlifeStates![0].currentAction,'rest');
     assert.equal(runtime.simulationClock.pendingInputChanges,0);assert.equal(runtime.keys.size,0);assert.equal(f.io.timers.size,0);assert.equal(observers.size,0);assert.equal(root.nativeInputProbe,originalProbe);assert.equal((listeners.get('keyup')??[]).length,1);assert.equal((listeners.get('keydown')??[]).length,1);
     if(batched){
       assert.ok(futureQueues.some(count=>count>0),'late native delivery must exercise a genuinely queued release');
       const before=runtime.playerInputSeconds,count=pulses.length;const longer=await root.lateWildlifeWaypoint({target:{x:42.2,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
-      assert.equal(longer.reached,true);assert.ok(longer.distance<=.2);assert.ok(pulses.length-count>1);assert.ok(runtime.playerInputSeconds-before<=2);assert.equal(runtime.simulationClock.pendingInputChanges,0);assert.equal(runtime.keys.size,0);assert.equal(reports.length,3);assert.equal(observers.size,0);
+      assert.equal(longer.reached,true);assert.ok(longer.distance<=.2);assert.ok(pulses.length-count>1);assert.ok(runtime.playerInputSeconds-before<=2);assert.equal(runtime.simulationClock.pendingInputChanges,0);assert.equal(runtime.keys.size,0);assert.equal(reports.length,2);assert.equal(observers.size,0);
     }
   }finally{
     gate.resolve();await pending;if(routeSeen)await routed.promise;clearInterval(tick);frames.clear();if(deliveryTimer!==undefined)clearTimeout(deliveryTimer);for(const deliver of deliveries.splice(0))deliver();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));

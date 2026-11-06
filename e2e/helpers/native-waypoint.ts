@@ -1,8 +1,8 @@
 /** Self-contained because Playwright serializes this function into Chromium.
  * Only ordinary keyboard listeners are driven; positions and calibrated NPC head
  * envelopes are read from the existing diagnostic DOM, never written. */
-export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSeconds}: {
-  target:{x:number;z:number};timeoutMs:number;tolerance:number;maxInputSeconds?:number;
+export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSeconds,probeScope}: {
+  target:{x:number;z:number};timeoutMs:number;tolerance:number;maxInputSeconds?:number;probeScope?:'shared';
 }) {
   if(maxInputSeconds!==undefined&&(!Number.isFinite(maxInputSeconds)||maxInputSeconds<=0||!Number.isFinite(timeoutMs)||timeoutMs<=0))
     throw new Error('Waypoint input and wall budgets must be positive and finite');
@@ -13,6 +13,7 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
   const probe=(window as unknown as {nativeInputProbe?:{
     start:(route:unknown)=>void;pulse:(request:{codes:string[];durationMs:number;deadlineEpochMs:number})=>Promise<unknown>;finish:()=>Promise<void>
   }}).nativeInputProbe;
+  if(probeScope==='shared'&&!probe)throw new Error('Shared waypoint trace requires the native input probe');
   const read=()=>{
     const data=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
     return {x:Number(data?.playerX??'NaN'),z:Number(data?.playerZ??'NaN')};
@@ -185,7 +186,7 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
   };
   const axisKey=(axis:'x'|'z',delta:number)=>axis==='x'?(delta>0?'KeyD':'KeyA'):(delta>0?'KeyS':'KeyW');
   try {
-    probe?.start({target,timeoutMs,tolerance,maxInputSeconds,begin,deadline});
+    if(probeScope!=='shared')probe?.start({target,timeoutMs,tolerance,maxInputSeconds,begin,deadline});
     while(true){
       if(document.pointerLockElement!==canvas)throw new Error('Waypoint lost pointer lock');
       const p=read();
@@ -297,6 +298,6 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
     simulatedAt=finalSimulation;
     const p=read(),distance=Math.hypot(target.x-p.x,target.z-p.z);record(p,'deadline');
     return {reached:false,...p,distance,detours,history,...budgetEvidence(stopReason)};
-  }finally {setHeld(new Set());await probe?.finish();}
+  }finally {setHeld(new Set());if(probeScope!=='shared')await probe?.finish();}
 }
 
