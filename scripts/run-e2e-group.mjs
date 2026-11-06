@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 // Keep serial files together on separate runners: each runner owns one SQLite world.
-// These groups balance observed completion windows, not measured parallel run times.
 // Check discovery without a browser: node scripts/run-e2e-group.mjs --list-only
 const groups = {
   A: ['baking-oven', 'environment-presentation', 'playable-smoke', 'player-input-clock', 'weather-persistence'],
@@ -64,8 +63,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const all = discover();
   const partitions = Object.fromEntries(Object.keys(groups).map(key => [key, discover(files(key))]));
   verifyCoverage(all, partitions);
-  console.log(`E2E coverage verified: A=${partitions.A.length}, B=${partitions.B.length}, ` +
-    `union=${all.length}, overlap=0, missing=0`);
   if (group !== '--list-only') {
     const result = spawnSync(process.execPath, [...baseArgs, ...files(group)], { cwd: root, stdio: 'inherit' });
     if (result.error) throw result.error;

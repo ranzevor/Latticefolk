@@ -131,13 +131,39 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
   });
   // A collision still consumes accepted direction-input time. The wall timer
   // also releases input when RAF stops, provided the page event loop can run.
-  const nextFrame=()=>new Promise<void>((resolve,reject)=>{
-      let settled=false;
-      let frame:number|undefined;
-      const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);if(frame!==undefined)cancelAnimationFrame(frame);resolve();};
-      const timer=setTimeout(finish,Math.max(0,deadline-performance.now()));
-      try{frame=requestAnimationFrame(finish);}catch(error){settled=true;clearTimeout(timer);reject(error);}
-    });
+  const observeInputConsumption=(codes:string[])=>{
+    const world=document.querySelector<HTMLElement>('#worldStatus');
+    if(!world)throw new Error('Waypoint clock observation is unavailable');
+    const remaining=new Set(codes);
+    let refreshed=false,disposed=false,publishedAt=Infinity;
+    const keyup=(event:KeyboardEvent)=>{if(!codes.includes(event.code))return;observer.takeRecords();remaining.delete(event.code);refreshed=false;publishedAt=Infinity;};
+    const observer=new MutationObserver(()=>{if(remaining.size===0){refreshed=true;publishedAt=performance.now();}});
+    const dispose=()=>{if(disposed)return;disposed=true;observer.disconnect();removeEventListener('keyup',keyup);};
+    try{addEventListener('keyup',keyup);observer.observe(world,{attributes:true,attributeFilter:['data-simulation-clock']});}
+    catch(error){dispose();throw error;}
+    return {dispose,wait:(release?:unknown)=>new Promise<boolean>((resolve,reject)=>{
+      let frame=0,settled=false,timer:ReturnType<typeof setTimeout>|undefined;
+      const releasedEventAt=(release as {releasedEventAt?:number}|undefined)?.releasedEventAt;
+      const ready=()=>{
+        const clock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number;pendingInputChanges:number}|null;
+        if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0||!Number.isInteger(clock.pendingInputChanges)||clock.pendingInputChanges<0)throw new Error('Waypoint clock observation is unavailable');
+        const raw=world.dataset.simulationConsumedThrough,consumed=raw?.trim()?Number(raw):NaN;
+        const consumedRelease=releasedEventAt===undefined||(Number.isFinite(releasedEventAt)&&releasedEventAt>=0&&Number.isFinite(consumed)&&consumed>=releasedEventAt);
+        return performance.now()<=deadline&&refreshed&&publishedAt<=deadline&&remaining.size===0&&consumedRelease&&clock.pendingInputChanges===0;
+      };
+      const finish=(consumed:boolean,error?:Error)=>{if(settled)return;settled=true;dispose();cancelAnimationFrame(frame);if(timer!==undefined)clearTimeout(timer);error?reject(error):resolve(consumed);};
+      const sample=()=>{
+        if(settled)return;
+        try{if(ready()){finish(true);return;}if(performance.now()>=deadline){finish(false);return;}frame=requestAnimationFrame(sample);}
+        catch(error){finish(false,error as Error);}
+      };
+      try{
+        if(ready()){finish(true);return;}
+        timer=setTimeout(()=>{try{finish(ready());}catch(error){finish(false,error as Error);}},Math.max(0,deadline-performance.now()));
+        frame=requestAnimationFrame(sample);
+      }catch(error){finish(false,error as Error);}
+    })};
+  };
   let progress:{goal:Point;distance:number;requested:number;speed:number;arrival:number}|undefined;
   let waypoints:Point[]=[];
   let plannerBlocked=false,avoidSign=1;
@@ -175,12 +201,9 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
       if(maxInputSeconds!==undefined&&inputSeconds>maxInputSeconds+1e-9){stopReason='input-budget';break;}
       if(progress&&(progress.goal.x-observedPosition.x)*(progress.goal.x-p.x)+(progress.goal.z-observedPosition.z)*(progress.goal.z-p.z)<0)progress=undefined;
       observedPosition=p;
-      const pending=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
-      if(!pending||!Number.isFinite(pending.pendingSeconds)||pending.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-      if(pending.pendingSeconds>0){
-        if(performance.now()>=deadline)break;
-        await nextFrame();continue;
-      }
+      const pending=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number;pendingInputChanges:number}|null;
+      if(!pending||!Number.isFinite(pending.pendingSeconds)||pending.pendingSeconds<0||!Number.isInteger(pending.pendingInputChanges)||pending.pendingInputChanges<0)throw new Error('Waypoint clock observation is unavailable');
+      if(pending.pendingInputChanges>0){if(performance.now()>=deadline||!(await observeInputConsumption([]).wait()))break;continue;}
       const distance=Math.hypot(target.x-p.x,target.z-p.z);
       if(distance<=tolerance){record(p,'reached');return {reached:true,...p,distance,detours,history,...budgetEvidence('reached')};}
       if(performance.now()>=deadline)break;
@@ -258,47 +281,16 @@ export async function driveNativeWaypoint({target,timeoutMs,tolerance,maxInputSe
         deadline-performance.now(),(maxInputSeconds===undefined?Infinity:maxInputSeconds-inputSeconds)*1000);
       if(!(pulseMs>0)||!Number.isFinite(pulseMs))throw new Error('Waypoint cannot issue a finite direction pulse');
       lastInput=next;
-      let release:unknown;
-      if(probe)release=await probe.pulse({codes:[...next],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
-      else {
-        setHeld(next);
-        await new Promise<void>(resolve=>setTimeout(()=>{setHeld(new Set());resolve();},pulseMs));
-      }
-      if(probe&&performance.now()>deadline)break;
-      if(probe){
-        await new Promise<void>((resolve,reject)=>{
-          const world=document.querySelector<HTMLElement>('#worldStatus');
-          if(!world){reject(new Error('Waypoint clock observation is unavailable'));return;}
-          const releasedEventAt=(release as {releasedEventAt?:number}|undefined)?.releasedEventAt;
-          const consumedRelease=()=>{
-            const raw=world.dataset.simulationConsumedThrough,consumed=raw?.trim()?Number(raw):NaN;
-            return typeof releasedEventAt==='number'&&Number.isFinite(releasedEventAt)&&releasedEventAt>=0&&Number.isFinite(consumed)&&consumed>=releasedEventAt;
-          };
-          const initialClock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
-          if(consumedRelease()&&initialClock?.pendingSeconds===0){resolve();return;}
-          const releasedAt=performance.now();let refreshed=false,frame=0,settled=false;
-          const observer=new MutationObserver(()=>{refreshed=true;});
-          observer.observe(world,{attributes:true,attributeFilter:['data-simulation-clock']});
-          const finish=(error?:Error)=>{if(settled)return;settled=true;observer.disconnect();cancelAnimationFrame(frame);clearTimeout(timer);error?reject(error):resolve();};
-          const timer=setTimeout(()=>finish(),Math.max(0,deadline-performance.now()));
-          const sample=(frameAt:number)=>{
-            try{
-              const clock=JSON.parse(world.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
-              if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-              if((releasedEventAt!==undefined?consumedRelease():(refreshed&&frameAt>=releasedAt))&&clock.pendingSeconds===0){finish();return;}
-              refreshed=false;frame=requestAnimationFrame(sample);
-            }catch(error){finish(error as Error);}
-          };
-          try{frame=requestAnimationFrame(sample);}catch(error){finish(error as Error);}
-        });
-      }else{
-        do {
-          await nextFrame();
-          const clock=JSON.parse(document.querySelector<HTMLElement>('#worldStatus')?.dataset.simulationClock??'null') as {pendingSeconds:number}|null;
-          if(!clock||!Number.isFinite(clock.pendingSeconds)||clock.pendingSeconds<0)throw new Error('Waypoint clock observation is unavailable');
-          if(clock.pendingSeconds===0)break;
-        } while(performance.now()<deadline);
-      }
+      const consumption=observeInputConsumption([...next]);
+      try{
+        let release:unknown;
+        if(probe)release=await probe.pulse({codes:[...next],durationMs:pulseMs,deadlineEpochMs:performance.timeOrigin+deadline});
+        else {
+          setHeld(next);
+          await new Promise<void>(resolve=>setTimeout(()=>{setHeld(new Set());resolve();},pulseMs));
+        }
+        if(performance.now()>deadline||!(await consumption.wait(release)))break;
+      }finally{consumption.dispose();}
     }
     const finalSimulation=simulation();
     if(!Number.isFinite(finalSimulation)||finalSimulation<simulatedAt)throw new Error('Waypoint simulation observation reset or became unavailable');

@@ -22,6 +22,7 @@ export class SimulationClock {
   private lastAnimationAt?:number;
   private input?:PlayerMovementInput;
   private changes:InputChange[]=[];
+  get pendingInputChanges(){return this.changes.length;}
   private lateEventOffset?:number;
   readonly diagnostics={elapsedSeconds:0,simulatedSeconds:0,pendingSeconds:0,steps:0,inputOverflowCount:0,resetReason:'none' as ResetReason};
 

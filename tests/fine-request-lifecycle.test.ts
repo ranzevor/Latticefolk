@@ -98,7 +98,7 @@ for(const scenario of [
   const events=new EventTarget(),timers=new Map<number,{at:number;callback:()=>void}>();let timerId=0,clock=scenario.createdAt;
   const body={requests:[{wildlife:{id:'rabbit_rng',randomEventCursor:17}}]};
   const transport=deferred();let outgoing:{wire:Request;init:RequestInit}|undefined;
-  const window={fetch:(url:string,init:RequestInit)=>{outgoing={wire:new Request(new URL(url,'http://fixture.local'),init),init};return transport.promise;}};
+  const window={dispatchEvent:events.dispatchEvent.bind(events),fetch:(url:string,init:RequestInit)=>{outgoing={wire:new Request(new URL(url,'http://fixture.local'),init),init};return transport.promise;}};
   if(phaseMarker){const install=ts.transpileModule(phaseMarker.getText(lateAst)+';markLateWildlifeRequestPhase();',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;new Function('window','addEventListener','Headers',install)(window,events.addEventListener.bind(events),Headers);}
   const arm=()=>{clock=scenario.armedAt;selection.arm();events.dispatchEvent(new Event('latticefolk-e2e-wildlife-arm'));};
   if(!scenario.before)arm();clock=scenario.createdAt;
@@ -121,7 +121,7 @@ for(const scenario of [
 test('late wildlife phase marker preserves unrelated fetch inputs and request options',async()=>{
   assert.ok(phaseMarker);
   const events=new EventTarget(),forwarded:Array<{input:unknown;init:RequestInit|undefined}>=[];
-  const window={fetch:(input:unknown,init?:RequestInit)=>{forwarded.push({input,init});return Promise.resolve(new Response(null,{status:204}));}};
+  const window={dispatchEvent:events.dispatchEvent.bind(events),fetch:(input:unknown,init?:RequestInit)=>{forwarded.push({input,init});return Promise.resolve(new Response(null,{status:204}));}};
   const install=ts.transpileModule(phaseMarker.getText(lateAst)+';markLateWildlifeRequestPhase();',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
   new Function('window','addEventListener','Headers',install)(window,events.addEventListener.bind(events),Headers);
   const signal=new AbortController().signal,options={method:'POST',body:'{"requests":[]}',headers:{'content-type':'application/json','x-fixture':'kept'},signal};
@@ -133,6 +133,28 @@ test('late wildlife phase marker preserves unrelated fetch inputs and request op
   await window.fetch('/api/wildlife/decide',options);const actual=forwarded.at(-1)!;
   assert.equal(actual.input,'/api/wildlife/decide');assert.equal(actual.init!.method,options.method);assert.equal(actual.init!.body,options.body);assert.equal(actual.init!.signal,signal);
   assert.deepEqual(Object.fromEntries(new Headers(actual.init!.headers)),{...options.headers,'x-latticefolk-e2e-wildlife-phase':'armed'});
+});
+
+test('late wildlife creation signal selects the first armed rabbit fetch after transport creation',async()=>{
+  assert.ok(phaseMarker);
+  const events=new EventTarget(),order:string[]=[],created:string[]=[],forwarded:RequestInit[]=[];
+  const window={dispatchEvent:events.dispatchEvent.bind(events),fetch:(_input:unknown,init:RequestInit)=>{
+    forwarded.push(init);order.push('fetch');return Promise.resolve(new Response(null,{status:204}));
+  }};
+  const install=ts.transpileModule(phaseMarker.getText(lateAst)+';markLateWildlifeRequestPhase();',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  new Function('window','addEventListener','Headers',install)(window,events.addEventListener.bind(events),Headers);
+  events.addEventListener('latticefolk-e2e-wildlife-created',event=>{order.push('created');created.push((event as CustomEvent<string>).detail);});
+  const options=(id:string,method='POST')=>({method,body:JSON.stringify({requests:[{wildlife:{id}}]})});
+  await window.fetch('/api/wildlife/decide',options('rabbit_rng'));
+  events.dispatchEvent(new CustomEvent('latticefolk-e2e-wildlife-arm',{detail:'rabbit_rng'}));
+  for(const [url,init] of [['/api/decision',options('rabbit_rng')],['/api/wildlife/decide',options('rabbit_rng','GET')],['/api/wildlife/decide',options('other')]] as const)
+    await window.fetch(url,init);
+  assert.equal(created.length,0);
+  await window.fetch('/api/wildlife/decide',options('rabbit_rng'));
+  await window.fetch('/api/wildlife/decide',options('rabbit_rng'));
+  assert.deepEqual(created,[options('rabbit_rng').body]);assert.deepEqual(order,['fetch','fetch','fetch','fetch','fetch','created','fetch']);
+  assert.equal(new Headers(forwarded[0].headers).has('x-latticefolk-e2e-wildlife-phase'),false);
+  assert.equal(new Headers(forwarded[4].headers).get('x-latticefolk-e2e-wildlife-phase'),'armed');
 });
 
 test('native HTTP decision error closes its unread response stream',{timeout:4000},async()=>{

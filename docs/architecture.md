@@ -25,9 +25,9 @@ DecisionProvider
 
 ## Semantic prop visuals
 
-A semantic WorldObject may exist before its visual asset is available, but a player-visible fallback mesh is not authoritative presentation. Furniture and settlement props that have approved visual mappings create an empty semantic group, register deterministic interaction/physics state, and then resolve a licensed asset into that group. If the asset fails, the object stays visually absent and diagnostics report the failure instead of substituting an assistant-authored box or cylinder.
+A semantic WorldObject may exist before its visual asset is available, but a player-visible fallback mesh is not authoritative presentation. Furniture and settlement props that have approved visual mappings create an empty semantic group, register deterministic interaction/physics state, and then resolve a licensed asset into that group. If the asset fails, the object stays visually absent and diagnostics report the failure instead of substituting a Box or Cylinder mesh.
 
-Solid licensed furniture re-registers its static AABB from the resolved world-space visual bounds. Farm plots remain non-blocking semantic interaction areas and visually compose only sourced Kenney soil/crop models. Model identity is selected from semantic kind/tags: maker/mill workstations use a workbench, guard work points use a weapon stand and are named accordingly, while bakery/oven objects remain intentionally unresolved until a semantically correct bread-oven asset is approved.
+Solid licensed furniture re-registers its static AABB from the resolved world-space visual bounds. Farm plots remain non-blocking semantic interaction areas and visually compose only sourced Kenney soil/crop models. Model identity is selected from semantic kind/tags: maker/mill workstations use a workbench, guard work points use a weapon stand and bakery/oven workstations map to the sourced cast-iron baking-oven asset. Resolved oven bounds register a dedicated static collider and interaction trigger; oven-specific exterior stance, recipe and inventory conservation, stable semantic identity and persisted state remain authoritative outside the visual mapping.
 
 ## Core invariant
 
@@ -38,7 +38,7 @@ This boundary makes remote decision models replaceable and allows the game to co
 
 ## Licensed visual asset boundary
 
-Player-visible scene models that have a sourced third-party asset binding never expose assistant-authored primitive geometry as a loading or error fallback. Registering a licensed visual target immediately clears any construction-time placeholder from its Three.js group; the semantic entity, collision/trigger authority, and persistence state continue to exist while the asset loads. On success the licensed model is attached to that same group. On failure the visual stays absent and the failed asset key is surfaced to runtime/E2E observability rather than substituting a Box/Cylinder/Cone/Plane mesh.
+Player-visible scene models that have a sourced third-party asset binding never expose primitive geometry as a loading or error fallback. Registering a licensed visual target immediately clears any construction-time placeholder from its Three.js group; the semantic entity, collision/trigger authority, and persistence state continue to exist while the asset loads. On success the licensed model is attached to that same group. On failure the visual stays absent and the failed asset key is surfaced to runtime/E2E observability rather than substituting a Box/Cylinder/Cone/Plane mesh.
 
 The Chromium playable gate requires every registered licensed visual target in the exercised home scene to resolve with zero asset-load failures. This policy currently covers asset-backed town buildings, NPC characters, trees, the well, crate/barrel/mine props, and the licensed movable cart. Legacy semantic objects that still lack a suitable licensed asset remain separate visual debt and must be replaced with sourced assets when that area is touched; this policy does not legitimize their primitive visuals.
 
@@ -72,7 +72,7 @@ Coarse chunk, region, and world policy requests also have a bounded client lifec
 
 This preserves the same authority boundary used for NPCs: a model selects policy; simulation code owns state mutation.
 
-The next required step is **round-trip LOD**: when a distant chunk becomes local, aggregate state must materialize into concrete inhabitants/resources/buildings; when it becomes distant, those entities must collapse back into aggregate state without losing persistent consequences.
+Round-trip LOD keeps one authoritative representation per chunk: first-person entry materializes aggregate state into concrete inhabitants, resources and buildings, while exit collapses those entities back into aggregate state without losing persistent consequences.
 
 
 ### Coarse ↔ fine materialization (implemented first pass)
@@ -88,7 +88,7 @@ The first round-trip LOD path is live.
 - Detailed fine NPC/object state is cached in memory, so re-entering the same chunk during the session restores identities, inventories, relationships, storage, and resource depletion.
 - God View never causes materialization; it remains an out-of-world observer.
 
-The next stage replaces the in-memory cache with durable SQLite persistence so browser/server restarts do not erase chunk history.
+Detailed fine-chunk history is persisted through the server-side SQLite snapshot described below. The in-memory cache provides session-local identity continuity, but it is not the durability boundary.
 
 
 ## Durable world persistence
@@ -200,7 +200,7 @@ This establishes the pattern for future production graphs: decision intent remai
 
 Wildlife now participates in the same coarse/fine world hierarchy as people and resources.
 
-The current species set is `rabbit`, `deer`, `boar`, `goat`, `fox`, `wolf`, and `badger`. Every discovered coarse chunk keeps species populations with count, carrying capacity, and population health. Carrying capacity is derived from the species profile's biome/resource affinity plus ecology, water, danger, and settlement pressure. Coarse simulation applies bounded population growth/loss, profile-defined plant consumption and predation, disease/competition pressure, and explicit conserved neighbor-to-neighbor wildlife migration.
+The current species set is `rabbit`, `deer`, `boar`, `goat`, `fox`, `wolf`, `badger`, `lynx`, `bison`, `raccoon`, `sheep`, and `warg`. Every discovered coarse chunk keeps species populations with count, carrying capacity, and population health. Carrying capacity is derived from the species profile's biome/resource affinity plus ecology, water, danger, and settlement pressure. Coarse simulation applies bounded population growth/loss, profile-defined plant consumption and predation, disease/competition pressure, and explicit conserved neighbor-to-neighbor wildlife migration.
 
 When a chunk materializes, a representative subset of its populations becomes persistent fine entities with:
 
@@ -296,7 +296,7 @@ Correlations are reported as unavailable rather than zero when there are fewer t
 
 ## Profile-driven wildlife species semantics
 
-Wildlife species semantics are centralized in `WildlifeSpeciesProfile` instead of being duplicated independently by coarse ecology, fine materialization, fallback decisions and rendering. The current set is `rabbit`, `deer`, `boar`, `goat`, `fox`, `wolf`, and `badger`. Each profile owns trophic role, biome and seasonal affinity, niche axes, plant forage/consumption weights, base carrying capacity, growth/herbivory/predation rates, feeding action/resource tags, fine trait baselines, life-history thresholds, predator/prey preference-damage-hunger consequences, and constrained procedural morphology features.
+Wildlife species semantics are centralized in `WildlifeSpeciesProfile` instead of being duplicated independently by coarse ecology, fine materialization, fallback decisions and rendering. The current set is `rabbit`, `deer`, `boar`, `goat`, `fox`, `wolf`, `badger`, `lynx`, `bison`, `raccoon`, `sheep`, and `warg`. Each profile owns trophic role, biome and seasonal affinity, niche axes, plant forage/consumption weights, base carrying capacity, growth/herbivory/predation rates, feeding action/resource tags, fine trait baselines, life-history thresholds, predator/prey preference-damage-hunger consequences, and constrained procedural morphology features.
 
 Badger is the first explicit mixed-trophic validation case: it has non-zero plant consumption and a legal rabbit prey edge, so coarse trophic flow can record both herbivory and predation and fine behavior can choose `forage` when prey is absent or `hunt` when a supplied rabbit target is legal. Wolf can also predate badger. This verifies that omnivory is represented by simulation-owned semantics rather than a special Decision Provider prompt. Procedural badger visuals use the same profile to create a lower elongated body, tail and dorsal/face stripe; no new third-party asset is required.
 
@@ -316,7 +316,7 @@ Fine simulation applies those multipliers to basal hunger/thirst/energy drain, p
 
 ## Constrained organism-family genome
 
-A separate `WildlifeOrganismGenome` generalizes individual variation beyond the first morphology/behavior phenotype without replacing species semantics. Every wildlife species maps to one simulation-owned family template: lagomorph, cervid, suiform, caprine, canid, mustelid or felid. The template bounds three gene groups: material palette offsets, plant-niche preference multipliers, and locomotion stride/endurance. Founder values are deterministic by entity identity; offspring values come from parental midpoint plus bounded deterministic mutation.
+A separate `WildlifeOrganismGenome` generalizes individual variation beyond the first morphology/behavior phenotype without replacing species semantics. Every wildlife species maps to one simulation-owned family template: lagomorph, cervid, suiform, caprine, canid, mustelid, felid, bovid or procyonid. The template bounds three gene groups: material palette offsets, plant-niche preference multipliers, and locomotion stride/endurance. Founder values are deterministic by entity identity; offspring values come from parental midpoint plus bounded deterministic mutation.
 
 The family layer is deliberately subordinate to `WildlifeSpeciesProfile`. Species profiles still define trophic role, legal prey edges, legal plant axes, life history, coarse carrying capacity and coarse ecological flow. Genome normalization always forces the correct family and clamps values to that template. Plant-niche genes only redistribute weights across axes where the species already has non-zero plant use; a wolf therefore keeps zero grass/shrub/fruit/crop use regardless of its genome. Fine plant consumption is renormalized to the species baseline total, so individual preference does not manufacture extra resource demand.
 
@@ -372,7 +372,7 @@ God View keeps the hard observer invariant. The player dynamic collider exists o
 
 Unloaded chunks run no fine collision/contact solver. Their static physics is cleared on fold-back and dynamic bodies disappear with fine runtime entities, while coarse simulation remains authoritative. Fine physics adds no persistence schema.
 
-This is the first physics phase, not a complete rigid-body engine. Terrain/ground height and slope limits, stateful doors, general rigid bodies, stacking, carts/vehicles and projectiles remain explicit next work. See [Physics](physics.md).
+Fine physics already owns chunk-scoped terrain height and ground contact, slope and ground-step limits, simulation-owned open/closed door colliders, and deterministic movement/contact for the licensed town cart. Door collider state is a physics foundation and is not yet wired into authored building-door gameplay. A complete general rigid-body engine, stacking/support and sleeping/wakeup rules, additional licensed movable archetypes and vehicles, and full projectile mechanics remain outside the current implementation. See [Physics](physics.md).
 
 ## Predator-pressure adaptation evidence
 
@@ -480,6 +480,6 @@ God View surfaces pooled stability, comparable refit counts, coefficient sign/ra
 
 Building WorldObject positions represent interaction frontage rather than a movable model anchor. Both home and streamed restore paths use `restoreBuildingForLayout` to preserve saved mutable state while keeping layout-owned body/collider/trigger transforms stable. This avoids a second interpretation of the same saved coordinate; version-1 persistence remains unchanged.
 
-`KinematicMoveInput.constraints` contains pure signed-clearance queries used only by character motion. Source-local oriented NPC head rectangles and the player's disc share the same pair query in both motion directions; body circles and segment/tool/cart contacts are not enlarged. Local validation freezes complete source and test evidence before running; it does not publish a synthetic CI success or change the merge authority.
+`KinematicMoveInput.constraints` contains pure signed-clearance queries used only by character motion. Source-local oriented NPC head rectangles and the player's disc share the same pair query in both motion directions; body circles and segment/tool/cart contacts are not enlarged.
 
 Source-oriented NPC collision uses a persisted optional facing angle (`NpcState.heading`) in addition to X/Z position. Missing version-1 legacy values default to +Z; providers do not set the field. Baking work intents resolve to static-safe exterior source stances before physical execution, while transient player-driven yielding only adjusts an active path's local motor step. Neither system writes production results, changes semantic IDs, or grants God cameras a world entity.

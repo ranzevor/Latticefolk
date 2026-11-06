@@ -21,12 +21,19 @@ import {StreamedActors} from '../src/scene/streamedActors.js';
 import {playerHeadClearance,NPC_BODY_RADIUS} from '../src/world/characterContact.js';
 import {isGodCameraInputKey} from '../src/scene/godCameraInput.js';
 import {isBakingOven} from '../src/scene/bakingOven.js';
+import {playerHeadConstraint} from '../src/world/characterContact.js';
+import {registerHomeTerrain} from '../src/world/fineTerrain.js';
+import {scheduleNativePulse} from '../e2e/helpers/native-pulse-scheduler.js';
+import vm from 'node:vm';
+import http from 'node:http';
+import {once} from 'node:events';
+import {setTimeout as sleep} from 'node:timers/promises';
 import type {DecisionResponse,NpcState,WildlifeState,WorldPersistenceSnapshot} from '../src/types.js';
 
 // Run the production methods; presentation and external IO are the only stubs.
 const source=fs.readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
-const wanted=new Set(['postFineDecision','createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
+const wanted=new Set(['updatePlayer','updateFineChunkMaterialization','postFineDecision','createFineNpcVisual','createWildlifeVisual','fineSpawnPosition','fineWorkplaceForRole','clearMovablePersistenceQueue','resetPlayerInput','resetSimulationClock','playerInputAllowed','playerMovementKey','recordPlayerInput','bindInput','initializePersistence','initializeWorld','setupNpcs','materializeFineChunk','spawnFineNpc','spawnWildlife','restoreWorldState','buildWorldSnapshot','buildFinalWorldSnapshot','flushWorldBeacon','saveWorldState','cancelPlayerTargeting','requestDecision','applyDecision','applyStateShift','npcWork','npcHarvest','completeTask','randomPassableNear','requestWildlifeBatch','applyWildlifeDecision','completeWildlifeAction','applyOwnedWildlifeCommand','materializePendingWildlifeTransfers','collapseFineChunk','completeFineWildlifeMigration','updateTime']);
 const members:string[]=[];
 for(const node of ast.statements)if(ts.isClassDeclaration(node)&&node.name?.text==='TownGame')for(const member of node.members)if(ts.isMethodDeclaration(member)&&wanted.has(member.name.getText(ast)))members.push(member.getText(ast));
 assert.equal(members.length,wanted.size);
@@ -38,17 +45,18 @@ const decision=(action:DecisionResponse['action']):DecisionResponse=>({action,co
 const npcRuntime=(state=npc())=>({state,mesh:new THREE.Group(),characterAsset:'female1',path:[],pathIndex:0,nextDecisionAt:0,pendingDecision:false,speechEl:{remove(){},classList:{add(){}}},nameEl:{remove(){},classList:{add(){}}}});
 const animalRuntime=(state=wildlife())=>({state,mesh:new THREE.Group(),path:[],pathIndex:0,nextDecisionAt:0,actionResolved:false});
 const chunkRuntime=(chunkId:string)=>({chunkId,npcIds:[] as string[],objectIds:[] as string[],wildlifeIds:[] as string[],initialWildlifeCounts:{},initialWildlifeIds:new Set(),fixedWildlifeWeights:new Map(),groups:[],initialMetrics:metrics()});
-function fixture(seed=random.DEFAULT_WORLD_SEED){
-  const io={clock:1000,snapshot:null as WorldPersistenceSnapshot|null,requests:[] as string[],beacons:[] as Blob[],reply:null as any,wait:undefined as Promise<any>|undefined,failed:false,logs:[] as string[],signals:[] as AbortSignal[],timers:new Map<number,{callback:()=>void;delay:number}>(),nextTimer:0};
+function fixture(seed=random.DEFAULT_WORLD_SEED,wallTime=false){
+  const io={clock:1000,snapshot:null as WorldPersistenceSnapshot|null,requests:[] as string[],beacons:[] as Blob[],reply:null as any,wait:undefined as Promise<any>|undefined,failed:false,logs:[] as string[],signals:[] as AbortSignal[],timers:new Map<number,{callback:()=>void;delay:number}>(),nextTimer:0,transport:undefined as ((url:string,init?:RequestInit)=>Promise<any>)|undefined};
+  const realTimers=new Map<number,ReturnType<typeof setTimeout>>();
   const input=new EventTarget(),elements=new Map<string,EventTarget>();
   const element=(selector:string)=>{let target=elements.get(selector);if(!target){target=new EventTarget();elements.set(selector,target);}return target;};
   const hidden=new Set<string>();const overlay={classList:{contains:(name:string)=>hidden.has(name),add:(name:string)=>hidden.add(name),remove:(name:string)=>hidden.delete(name)}};
   const controls=Object.assign(new EventTarget(),{isLocked:false,lock(this:EventTarget&{isLocked:boolean}){this.isLocked=true;this.dispatchEvent(new Event('lock'));}});
   const math=Object.create(Math);math.random=()=>{throw new Error('ambient Math.random');};
-  const fetch=async(url:string,init?:RequestInit)=>{io.requests.push(url);if(init?.signal)io.signals.push(init.signal);if(io.failed)throw Error('offline');if(io.wait)return io.wait;return {ok:true,json:async()=>url==='/api/world/state'?{snapshot:io.snapshot,revision:4}:io.reply};};
-  const deps={isPlayerMovementKey,...layouts,StreamedActors,playerHeadClearance,NPC_BODY_RADIUS,isGodCameraInputKey,...random,...phenotype,...organisms,...domestication,...migration,...species,THREE,CoarseWorldRuntime,planFineChunk,registerFineTerrainForChunk,restoredPlayerPosition,restoreBuildingForLayout,isBakingOven,Math:math,
-    setTimeout:(callback:()=>void,delay:number)=>{const id=++io.nextTimer;io.timers.set(id,{callback,delay});return id;},clearTimeout:(id:number)=>io.timers.delete(id),
-    now:()=>io.clock,Date:{now:()=>2000},clamp:(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n)),dist:(a:any,b:any)=>Math.hypot(a.x-b.x,a.z-b.z),fetch,
+  const fetch=async(url:string,init?:RequestInit)=>{io.requests.push(url);if(init?.signal)io.signals.push(init.signal);if(io.transport)return io.transport(url,init);if(io.failed)throw Error('offline');if(io.wait)return io.wait;return {ok:true,json:async()=>url==='/api/world/state'?{snapshot:io.snapshot,revision:4}:io.reply};};
+  const deps={playerHeadConstraint,isPlayerMovementKey,...layouts,StreamedActors,playerHeadClearance,NPC_BODY_RADIUS,isGodCameraInputKey,...random,...phenotype,...organisms,...domestication,...migration,...species,THREE,CoarseWorldRuntime,planFineChunk,registerFineTerrainForChunk,restoredPlayerPosition,restoreBuildingForLayout,isBakingOven,Math:math,
+    setTimeout:(callback:()=>void,delay:number)=>{const id=++io.nextTimer;io.timers.set(id,{callback,delay});if(wallTime)realTimers.set(id,setTimeout(()=>{realTimers.delete(id);io.timers.delete(id);callback();},delay));return id;},clearTimeout:(id:number)=>{const real=realTimers.get(id);if(real!==undefined)clearTimeout(real);realTimers.delete(id);io.timers.delete(id);},
+    now:()=>wallTime?performance.now():io.clock,Date:{now:()=>2000},clamp:(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n)),dist:(a:any,b:any)=>Math.hypot(a.x-b.x,a.z-b.z),fetch,
     i18n:{t:(key:string,values?:{error?:string})=>values?.error?`${key}: ${values.error}`:key},navigator:{sendBeacon:(_url:string,body:Blob)=>{io.beacons.push(body);return true;}},
     window:{clearTimeout:(id:number)=>io.timers.delete(id)},document:{hidden:false,hasFocus:()=>true,addEventListener:input.addEventListener.bind(input),createElement:()=>({className:'',remove(){},classList:{add(){}}}),querySelector:element,querySelectorAll:()=>[]},addEventListener:input.addEventListener.bind(input),ui:{admin:{classList:{contains:()=>true}},speechLayer:{appendChild(){}},modeBtn:element('mode'),localeSelect:element('locale'),overlay}};
   const Runtime=new Function(...Object.keys(deps),code)(...Object.values(deps));const runtime=new Runtime() as Record<string,any>;
@@ -339,4 +347,99 @@ test('inactive known visuals never initialize a wake or advance their saved curs
  const npcView=f.runtime.createFineNpcVisual(n,'female1'),animalView=f.runtime.createWildlifeVisual(w);
  for(const view of [npcView,animalView]){assert.equal(view.removed,true);assert.equal(view.nextDecisionAt,Infinity);}
  assert.deepEqual([n,w],before);assert.equal(f.runtime.npcs.size,0);assert.equal(f.runtime.wildlife.size,0);assert.equal(f.runtime.wildlifeLineage.size,0);
+});
+
+const browserFunction=(path:string,name:string)=>{
+  const body=ts.transpileModule(fs.readFileSync(new URL(path,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText
+    .replace(`export async function ${name}`,`async function ${name}`);
+  return vm.runInNewContext(`${body}\n${name};`) as Function;
+};
+const waypointFunction=browserFunction('../e2e/helpers/native-waypoint.ts','driveNativeWaypoint');
+const transitionFunction=browserFunction('../e2e/helpers/late-wildlife-transition.ts','driveLateWildlifeTransition');
+const worldE2e=ts.createSourceFile('world-randomness.spec.ts',fs.readFileSync(new URL('../e2e/world-randomness.spec.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+const marker=worldE2e.statements.find((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&node.name?.text==='markLateWildlifeRequestPhase')!;
+const probeAst=ts.createSourceFile('native-input-probe.ts',fs.readFileSync(new URL('../e2e/helpers/native-input-probe.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+let probeInstall='';
+const findProbeInstall=(node:ts.Node)=>{if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='addInitScript')probeInstall=node.arguments[0].getText(probeAst);ts.forEachChild(node,findProbeInstall);};
+findProbeInstall(probeAst);assert.ok(probeInstall);
+const clockPublication:string[]=[];
+for(const declaration of ast.statements)if(ts.isClassDeclaration(declaration)&&declaration.name?.text==='TownGame')for(const member of declaration.members)
+  if(ts.isMethodDeclaration(member)&&member.name.getText(ast)==='updateUi')for(const statement of member.body!.statements)
+    if(ts.isExpressionStatement(statement)&&ts.isBinaryExpression(statement.expression)&&['simulationClock','simulationConsumedThrough','playerInputSeconds','playerX','playerZ'].some(key=>(statement.expression as ts.BinaryExpression).left.getText(ast)===`ui.world.dataset.${key}`))clockPublication.push(statement.getText(ast));
+assert.equal(clockPublication.length,5);
+
+for(const batched of [false,true])test(`serialized late wildlife consumer completes real HTTP before deadline with ${batched?'batched':'prompt'} native delivery`,{timeout:15_000},async()=>{
+  const f=fixture(random.DEFAULT_WORLD_SEED,true),runtime=f.runtime;
+  const chunk={id:'chunk_2_0',cx:2,cz:0,biome:'dryland',settlementLevel:0,population:0,food:0,wood:0,water:0,ecology:0,danger:0,prosperity:0,
+    strategy:'sustain',migrationPolicy:'retain',ecologyPolicy:'balance',lastDecisionAt:0,decisionVersion:0,wildlife:[{species:'rabbit',count:1,carryingCapacity:3,health:100}]};
+  const coarseWorld=new CoarseWorldRuntime(new THREE.Scene());coarseWorld.chunks.set(chunk.id,chunk as any);coarseWorld.ensureWindowAround=()=>false;
+  runtime.coarseWorld=coarseWorld;runtime.fineChunkCache.set(chunk.id,{npcStates:[],objectStates:[],wildlifeStates:[wildlife({id:'rabbit_rng',position:{x:44,z:5},hunger:0,thirst:0,energy:100})]});
+  registerHomeTerrain(runtime.physics,72);
+  Object.assign(runtime,{playerPosition:{x:36.2,z:1.2},playerInputSeconds:0,firstPersonRotation:new THREE.Euler(),physicsDynamicColliders:()=>[],playerBlockedNpcs:new Set(),syncKnownActorPresentation(){}});
+  runtime.streamedPresentation.unitIds=()=>['unit_1_0'];
+  runtime.updateFineChunkMaterialization=Object.getPrototypeOf(runtime).updateFineChunkMaterialization.bind(runtime);
+  runtime.wildlifeSnapshot=(animal:any)=>({wildlife:structuredClone(animal.state)});
+  runtime.camera.position.set(36.2,1.7,1.2);runtime.controls.isLocked=true;runtime.materializeFineChunk(chunk);f.hidden.add('hidden');
+  const old=runtime.wildlife.get('rabbit_rng');old.nextDecisionAt=0;
+  const gate=deferred<void>(),routed=deferred<void>();let routeError:unknown,routeSeen=false,serverFinished=false,response:Response|undefined;
+  const server=http.createServer(async(request,reply)=>{
+    try{
+      let body='';for await(const part of request)body+=String(part);
+      assert.equal(request.method,'POST');assert.equal(request.url,'/api/wildlife/decide');assert.equal(request.headers['x-latticefolk-e2e-wildlife-phase'],'armed');
+      const animal=JSON.parse(body).requests.find((row:any)=>row.wildlife.id==='rabbit_rng');assert.equal(animal.wildlife.randomEventCursor,17);
+      routeSeen=true;await sleep(200);await gate.promise;
+      const finished=once(reply,'finish');reply.writeHead(200,{'content-type':'application/json'});reply.end(JSON.stringify({decisions:[{wildlifeId:'rabbit_rng',action:'wander',source:'late',confidence:1,reasonCode:'old-owner'}]}));
+      await finished;serverFinished=true;
+    }catch(error){routeError=error;if(!reply.destroyed){reply.statusCode=500;reply.end();}}
+    finally{routed.resolve();}
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert.ok(address&&typeof address!=='string');
+  const events=new EventTarget(),listeners=new Map<string,Array<(event:any)=>void>>(),frames=new Map<number,(at:number)=>void>(),observers=new Set<()=>void>(),reports:any[]=[],pulses:any[]=[],futureQueues:number[]=[];
+  let frameId=0,frameError:unknown,deliveryTimer:ReturnType<typeof setTimeout>|undefined;
+  const deliveries:Array<()=>void>=[],canvas={},world={dataset:{} as Record<string,string>};
+  const publish=new Function('ui',ts.transpileModule(`return function(){${clockPublication.join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)({world});
+  const updateHud=()=>{publish.call(runtime);world.dataset.materializedChunks=String(runtime.materializedChunks.size);world.dataset.characterSoles='[]';world.dataset.treePresentation='[]';world.dataset.wildlifeVisuals=JSON.stringify([...runtime.wildlife.values()].filter((animal:any)=>!animal.removed).map((animal:any)=>({id:animal.state.id})));for(const notify of observers)notify();};
+  const root:any={fetch:(url:string,init:RequestInit)=>globalThis.fetch(`http://127.0.0.1:${address.port}${url}`,init).then(value=>{response=value;return value;}),dispatchEvent:events.dispatchEvent.bind(events),
+    releaseLateWildlife:async()=>{await sleep(1250);gate.resolve();},__latticeNativeProbeRecord:async(value:unknown)=>{await sleep(125);reports.push(value);},
+    __latticeNativePulse:async(request:any)=>{
+      assert.equal(runtime.simulationClock.pendingInputChanges,0,'each pulse must follow complete consumption of its predecessor');
+      pulses.push(request);
+      const result=await scheduleNativePulse(request,{now:()=>performance.timeOrigin+performance.now(),schedule:(callback,delay)=>setTimeout(callback,delay),cancel:(timer:any)=>clearTimeout(timer),dispatch:async command=>{
+        const eventAt=performance.now();
+        if(batched)await new Promise<void>(resolve=>{deliveries.push(resolve);if(deliveryTimer===undefined)deliveryTimer=setTimeout(()=>{deliveryTimer=undefined;for(const deliver of deliveries.splice(0))deliver();},350);});
+        const type=command.type==='rawKeyDown'?'keydown':'keyup';runtime.playerMovementKey(command.code,type==='keydown',false,eventAt);
+        for(const listener of listeners.get(type)??[])listener({type,code:command.code,timeStamp:eventAt,isTrusted:true,repeat:false});
+      }});
+      assert.deepEqual(result.errors,[]);if(batched)futureQueues.push(runtime.simulationClock.pendingInputChanges);return result;
+    }};
+  const context=vm.createContext({window:root,performance,Headers,Event,CustomEvent,setTimeout,clearTimeout,
+    addEventListener:(type:string,callback:any)=>{if(type==='keydown'||type==='keyup'){const current=listeners.get(type)??[];current.push(callback);listeners.set(type,current);}else events.addEventListener(type,callback);},
+    removeEventListener:(type:string,callback:any)=>{if(type==='keydown'||type==='keyup')listeners.set(type,(listeners.get(type)??[]).filter(listener=>listener!==callback));else events.removeEventListener(type,callback);},document:{pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:world,hasFocus:()=>true,hidden:false},
+    requestAnimationFrame:(callback:(at:number)=>void)=>{frames.set(++frameId,callback);return frameId;},cancelAnimationFrame:(id:number)=>frames.delete(id),
+    MutationObserver:class{constructor(readonly notify:()=>void){}observe(){observers.add(this.notify);}takeRecords(){return [];}disconnect(){observers.delete(this.notify);}}});
+  vm.runInContext(ts.transpileModule(`(${probeInstall})();${marker.getText(worldE2e)};markLateWildlifeRequestPhase();`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context);
+  vm.runInContext(`window.lateWildlifeWaypoint=(${waypointFunction.toString()});`,context);
+  const consume=vm.runInContext(`(${transitionFunction.toString()})`,context);
+  f.io.transport=(url,init)=>root.fetch(url,init);runtime.simulationClock.advance(performance.now(),()=>{});updateHud();
+  const transitions:number[]=[];
+  const tick=setInterval(()=>{try{const was=runtime.materializedChunks.size,now=performance.now();runtime.simulationClock.advanceFrame(now,now,(dt:number,input:any)=>{runtime.updatePlayer(dt,input??{forward:0,right:0,sprint:false,directionX:0,directionZ:-1});runtime.updateFineChunkMaterialization();});if(was!==runtime.materializedChunks.size)transitions.push(runtime.materializedChunks.size);updateHud();const jobs=[...frames.values()];frames.clear();for(const callback of jobs)callback(now);}catch(error){frameError=error;}},160);
+  let pending:Promise<void>|undefined;
+  const originalProbe=root.nativeInputProbe;
+  try{
+    await sleep(100);const consuming=consume({wildlifeId:'rabbit_rng'});pending=runtime.requestWildlifeBatch();const result=await consuming;await pending;await routed.promise;
+    assert.equal(routeError,undefined);assert.equal(frameError,undefined);assert.equal(routeSeen,true);assert.equal(serverFinished,true);assert.equal(response?.status,200);assert.equal(response.bodyUsed,true);assert.equal(f.io.signals[0].aborted,false);
+    assert.deepEqual(transitions,[0,1]);assert.equal(result.unloaded,0);assert.equal(result.materialized,1);assert.equal(result.visible,true);assert.ok(result.releasedAt-result.requestCreated<8000);
+    assert.ok(result.outbound.x<35.7);assert.ok(result.inbound.x>35.8);assert.ok(result.outbound.inputSeconds<=2);assert.ok(result.inbound.inputSeconds<=2);
+    assert.equal(reports.length,2);assert.ok(reports.every(report=>report.held.length===0&&report.keys.every((key:any)=>key.trusted)));assert.equal(pulses.length,2);
+    const current=runtime.wildlife.get('rabbit_rng');assert.notEqual(current,old);assert.equal(current.mesh,old.mesh);assert.equal(old.removed,true);assert.equal(current.state.randomEventCursor,17);assert.equal(current.state.currentAction,'rest');
+    const saved=runtime.buildWorldSnapshot();assert.equal(saved.fineChunks.find((row:any)=>row.chunkId===chunk.id)!.wildlifeStates![0].randomEventCursor,17);assert.equal(saved.fineChunks.find((row:any)=>row.chunkId===chunk.id)!.wildlifeStates![0].currentAction,'rest');
+    assert.equal(runtime.simulationClock.pendingInputChanges,0);assert.equal(runtime.keys.size,0);assert.equal(f.io.timers.size,0);assert.equal(observers.size,0);assert.equal(root.nativeInputProbe,originalProbe);assert.equal((listeners.get('keyup')??[]).length,1);assert.equal((listeners.get('keydown')??[]).length,1);
+    if(batched){
+      assert.ok(futureQueues.some(count=>count>0),'late native delivery must exercise a genuinely queued release');
+      const before=runtime.playerInputSeconds,count=pulses.length;const longer=await root.lateWildlifeWaypoint({target:{x:42.2,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
+      assert.equal(longer.reached,true);assert.ok(longer.distance<=.2);assert.ok(pulses.length-count>1);assert.ok(runtime.playerInputSeconds-before<=2);assert.equal(runtime.simulationClock.pendingInputChanges,0);assert.equal(runtime.keys.size,0);assert.equal(reports.length,3);assert.equal(observers.size,0);
+    }
+  }finally{
+    gate.resolve();await pending;if(routeSeen)await routed.promise;clearInterval(tick);frames.clear();if(deliveryTimer!==undefined)clearTimeout(deliveryTimer);for(const deliver of deliveries.splice(0))deliver();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  }
 });

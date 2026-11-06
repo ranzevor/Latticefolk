@@ -8,8 +8,7 @@ export async function lookForObject(page:Page,title:string,yaw:number,pitch:numb
   // Preserve relative turns by default. Mouse-Start fixtures can opt into a
   // world heading, correcting observed drift through the same relative inputs.
   // Keep the five pitch candidates, pitch limits and two rendered frames.
-  // The retained failure trace showed multi-second selector/dispatch round trips;
-  // batching the input/read checkpoint removes that overhead, not an assertion.
+  // Batch input and its read checkpoint to avoid repeated selector/dispatch RPCs.
   const found=await page.evaluate(async({title,yaw,pitch,reference})=>{
     const canvas=document.querySelector('#game canvas');
     if(!canvas||document.pointerLockElement!==canvas)throw new Error('Relative look requires the real locked game canvas');

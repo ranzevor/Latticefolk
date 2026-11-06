@@ -165,3 +165,25 @@ test('retained input insertion cannot rewind consumed time or bypass handled-tim
  near(f.steps.filter(s=>s.input).reduce((sum,s)=>sum+s.seconds,0),.2);near(f.steps.reduce((sum,s)=>sum+s.seconds,0),.3);near(f.clock.consumedThroughMs!,1300);
  assert.equal(f.clock.recordEvent(1200,1299,east),false);assert.equal(f.clock.diagnostics.resetReason,'invalid-time');
 });
+
+
+test('pending input counts effective queued edges independently of world debt',()=>{
+ const f=fixture();f.frame(0);f.frame(1000);assert.equal(f.clock.pendingInputChanges,0);
+ assert.equal(f.clock.recordEvent(100,1200,east),true);
+ assert.equal(f.clock.recordEvent(300,1201,undefined),true);
+ assert.equal(f.clock.pendingInputChanges,2);f.frame(1150);
+ assert.ok(f.clock.consumedThroughMs!>=300);assert.equal(f.clock.diagnostics.pendingSeconds,0);
+ assert.equal(f.clock.pendingInputChanges,1);f.frame(1200);assert.equal(f.clock.pendingInputChanges,0);
+ f.clock.recordEvent(1300,1300,east);f.clock.recordEvent(1500,1500,undefined);f.frame(5000);
+ assert.equal(f.clock.pendingInputChanges,0);assert.ok(f.clock.diagnostics.pendingSeconds>0);
+});
+
+test('pending input count follows coalescing, overflow release and cancellation',()=>{
+ const f=fixture();f.frame(0);f.clock.record(100,east);f.clock.record(100,undefined);
+ assert.equal(f.clock.pendingInputChanges,1);f.frame(100);assert.equal(f.clock.pendingInputChanges,0);
+ for(let i=1;i<SIMULATION_MAX_INPUT_CHANGES;i++)f.clock.record(100+i,{...east,directionX:i});
+ assert.equal(f.clock.record(356,east),false);assert.equal(f.clock.pendingInputChanges,SIMULATION_MAX_INPUT_CHANGES);
+ f.frame(1000);assert.equal(f.clock.pendingInputChanges,0);
+ f.clock.record(1100,east);assert.equal(f.clock.pendingInputChanges,1);f.clock.clearInput();assert.equal(f.clock.pendingInputChanges,0);
+ f.clock.record(1200,east);f.clock.reset();assert.equal(f.clock.pendingInputChanges,0);
+});

@@ -16,18 +16,18 @@ const source=fs.readFileSync(new URL('../e2e/helpers/native-waypoint.ts',import.
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace('export async function driveNativeWaypoint','async function driveNativeWaypoint')+'\ndriveNativeWaypoint;';
 const fixture=JSON.parse(fs.readFileSync(new URL('./fixtures/native-waypoint-progress-ci.json',import.meta.url),'utf8'));
 
-// A small callback contract harness. Optional synthetic observations test the
-// progress detector; only the contact fixtures below claim production physics.
+// Synthetic-progress cases exercise the callback's timing and recovery state machine.
+// Physical-contact cases run the same callback against FinePhysicsAuthority and NPC yielding.
 async function drive(options:{start:Point;target:Point;wallMs:number;simulationDt?:number;timeoutMs?:number;tolerance?:number;zeroFrames?:number;observed?:(simulation:number,frame:number)=>unknown;
   pose?:(frame:number,p:Point,keys:Set<string>,dt:number)=>Point;actors?:Pose[];stopOnRecovery?:boolean}){
  let p={...options.start},wall=0,simulation=0,frames=0;
  const held=new Set<string>(),events:Array<{frame:number;type:string;code:string}>=[],poses:Array<{p:Point;keys:string[];simulation:number}>=[];
  const canvas={},physics=new FinePhysicsAuthority();registerHomeTerrain(physics,72);
- const dataset=new Proxy({},{get:(_,key)=>key==='playerX'?p.x.toFixed(4):key==='playerZ'?p.z.toFixed(4):key==='simulationClock'?JSON.stringify(clock.clock.diagnostics):key==='playerInputSeconds'?(options.observed?options.observed(simulation,frames):String(simulation)):key==='treePresentation'?'[]':key==='characterSoles'?JSON.stringify((options.actors??[]).map(a=>({...a,headYaw:a.yaw,headEnvelope:characterHeadEnvelope(a.asset)}))):undefined,set:()=>{throw new Error('no diagnostic writes');}});
+ const dataset=new Proxy({},{get:(_,key)=>key==='playerX'?p.x.toFixed(4):key==='playerZ'?p.z.toFixed(4):key==='simulationClock'?JSON.stringify({...clock.clock.diagnostics,pendingInputChanges:clock.clock.pendingInputChanges}):key==='playerInputSeconds'?(options.observed?options.observed(simulation,frames):String(simulation)):key==='treePresentation'?'[]':key==='characterSoles'?JSON.stringify((options.actors??[]).map(a=>({...a,headYaw:a.yaw,headEnvelope:characterHeadEnvelope(a.asset)}))):undefined,set:()=>{throw new Error('no diagnostic writes');}});
  let steps=0;
  const clock=nativeInputClock({frameMs:options.wallMs,onFrame:()=>{frames++;wall=frames*options.wallMs;},onStep:(seconds,active)=>{
   const dt=frames<=(options.zeroFrames??0)?0:seconds*(options.simulationDt===undefined?1:options.simulationDt/.05);simulation+=dt;steps++;
-  if(options.stopOnRecovery&&steps>1&&(!active.has('KeyD')||!active.has('KeyW')))throw new Error('recovery selected; uncaptured future path deliberately not simulated');
+  if(options.stopOnRecovery&&steps>1&&(!active.has('KeyD')||!active.has('KeyW')))throw new Error('recovery selected outside the bounded contact scenario');
   const dx=Number(active.has('KeyD'))-Number(active.has('KeyA')),dz=Number(active.has('KeyS'))-Number(active.has('KeyW')),length=Math.hypot(dx,dz);
   if(options.pose)p=options.pose(steps,p,active,dt);
   else if(length){const d=(active.has('ShiftLeft')?7.2:4.5)*dt;p=physics.moveKinematic({id:'player',position:p,radius:.3,displacement:{x:dx/length*d,z:dz/length*d},dynamic:(options.actors??[]).map(a=>({id:a.id,...a.position,radius:.32})),constraints:(options.actors??[]).map(a=>playerHeadConstraint(a.id,a.asset,a.position,a.yaw))}).position;}
@@ -74,16 +74,16 @@ function contactWorld(){
   const speed=(keys.has('ShiftLeft')?7.2:4.5)*dt,travel={x:dx/len*speed,z:dz/len*speed};
   const resolved=physics.moveKinematic({id:'player',position:p,radius:.3,displacement:travel,dynamic:[f.cart,...actors.map(a=>({id:'npc:'+a.id,...a.position,radius:.32}))],constraints:actors.map(a=>playerHeadConstraint('npc:'+a.id,a.asset,a.position,a.yaw))});p=resolved.position;
   const yielding=stepNpcYield(physics,{id:'npc:'+npc.id,asset:npc.asset,position:npc.position,yaw:npc.yaw,player:p,travel,activePath:true,blockedPlayer:resolved.dynamicHits.includes('npc:'+npc.id),plan,dt,dynamic:[f.cart,{id:'player',...p,radius:.3},...actors.filter(a=>a.id!==npc.id).map(a=>({id:'npc:'+a.id,...a.position,radius:.32}))]});
-  assert.ok(yielding,'uncaptured ordinary NPC path is outside this fixture');npc.position=yielding.position;plan=yielding.plan;
+  assert.ok(yielding,'fixture requires the yielding actor to remain on its active contact path');npc.position=yielding.position;plan=yielding.plan;
   assert.ok(playerHeadClearance(npc.asset,npc.position,npc.yaw,p)>=-1e-8);rows.push({p:{...p},hits:resolved.dynamicHits,distance:Math.hypot(p.x-f.target.x,p.z-f.target.z)});return p;
  },read:()=>({p,npc})};
 }
-test('captured ten-frame contact exactly matches both observed endpoints',()=>{
+test('ten-frame physical contact matches the fixture endpoints',()=>{
  const w=contactWorld();for(let i=0;i<10;i++)w.step(new Set(fixture.keys),fixture.dt);
  assert.deepEqual(w.read().p,fixture.expected.player);assert.deepEqual(w.read().npc.position,fixture.expected.nao);
  assert.ok(w.rows.every(r=>r.hits.includes('npc:nao')));
 });
-for(const wallMs of [100,1600])test(`captured partial contact selects recovery promptly at ${wallMs}ms`,async()=>{
+for(const wallMs of [100,1600])test(`partial physical contact selects recovery promptly at ${wallMs}ms`,async()=>{
  const w=contactWorld();const r=await drive({start:fixture.player,target:fixture.target,wallMs,tolerance:fixture.tolerance,actors:w.actors,
   pose:(_i,_p,keys,dt)=>w.step(keys,dt),stopOnRecovery:true});
  assert.match(String(r.error),/recovery selected/);assert.ok(w.rows.length>=3&&w.rows.length<=6,`applied frames ${w.rows.length}`);
@@ -114,10 +114,10 @@ test('a missing final observation cannot be accepted at the wall deadline',async
 });
 
 
-test('sustained rendering beyond the advance budget leaves debt visible at the original deadline',async()=>{
+test('consumed input can complete while unrelated foreground world debt remains visible',async()=>{
  const r=await drive({start:{x:0,z:0},target:{x:5,z:0},wallMs:2500});
- assert.equal(r.result?.reached,false);assert.equal(r.wall,45000);assert.equal(r.result?.detours,0);
- assert.ok(r.simulation>0);assert.ok(r.events.every(e=>e.at<=250));
+ assert.equal(r.result?.reached,true);assert.ok(r.wall<=45000);assert.equal(r.result?.detours,0);
+ assert.ok(r.simulation>0);const clock=(r.result as Result&{clock:{pendingSeconds:number;pendingInputChanges:number}}).clock;assert.ok(clock.pendingSeconds>0);assert.equal(clock.pendingInputChanges,0);
 });
 
 test('unobstructed overshoot corrections do not become collision detours',async()=>{

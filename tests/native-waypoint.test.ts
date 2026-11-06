@@ -17,10 +17,10 @@ const source=fs.readFileSync(new URL('../e2e/helpers/native-waypoint.ts',import.
 const callback=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}})
   .outputText.replace('export async function driveNativeWaypoint','async function driveNativeWaypoint')+'\ndriveNativeWaypoint;';
 const saved=JSON.parse(fs.readFileSync(new URL('./fixtures/native-waypoint-ci.json',import.meta.url),'utf8')) as Omit<Fixture,'name'>;
-const actual:Fixture={...saved,name:'CI frozen actor poses'};
+const actual:Fixture={...saved,name:'Ten-actor waypoint layout'};
 const actor=(id:string,asset:string,x:number,z:number,headYaw:number):Actor=>({id,asset,position:{x,z},headYaw});
 
-async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;moveActor?:boolean;intrudeAt?:number;badActors?:boolean;badPosition?:boolean;coverGoalAt?:number;uncoverGoalAt?:number;badTrees?:boolean;badCounter?:'missing'|'NaN'|'rollback'|'frozen';simulationStart?:number;rafThrows?:boolean;lateFreeze?:boolean;timerDelayMs?:number;noFrames?:boolean;frameIntervals?:number[]}={}){
+async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;moveActor?:boolean;intrudeAt?:number;badActors?:boolean;badPosition?:boolean;coverGoalAt?:number;uncoverGoalAt?:number;badTrees?:boolean;badCounter?:'missing'|'NaN'|'rollback'|'frozen';simulationStart?:number;rafThrows?:boolean;lateFreeze?:boolean;timerDelayMs?:number;noFrames?:boolean;frameIntervals?:number[];timersBeforeFrames?:boolean}={}){
   let p={...fixture.start},elapsed=0,frames=0,simulation=options.simulationStart??0;
   const actors=structuredClone(fixture.actors),held=new Set<string>(),events:Array<{type:string;code:string}>=[];
   const physics=new FinePhysicsAuthority();registerHomeTerrain(physics,72);
@@ -31,7 +31,7 @@ async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;
     if(key==='playerZ')return p.z.toFixed(4);
     if(key==='playerInputSeconds')return options.lateFreeze?String(Math.min(simulation,.1)):
       frames>0&&options.badCounter?({missing:'',NaN:'NaN',rollback:'-1',frozen:'0'}[options.badCounter]):String(simulation);
-    if(key==='simulationClock')return JSON.stringify(clock.clock.diagnostics);
+    if(key==='simulationClock')return JSON.stringify({...clock.clock.diagnostics,pendingInputChanges:clock.clock.pendingInputChanges});
     if(key==='treePresentation')return options.badTrees?'{invalid':JSON.stringify((fixture.diagnosticStatics??[]).map(collider=>({collider})));
     if(key==='characterSoles'&&options.badActors)return '{invalid';
     if(key==='characterSoles')return JSON.stringify(actors.map(a=>({...a,headEnvelope:characterHeadEnvelope(a.asset)})));
@@ -39,7 +39,7 @@ async function replay(fixture:Fixture,frameMs:number,options:{loseLock?:boolean;
   },set:()=>{throw new Error('diagnostic mutation is forbidden');}});
   const document={pointerLockElement:canvas as object|null,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}};
   let intrusionSteps=0;
-  const clock=nativeInputClock({frameMs,frameIntervals:options.frameIntervals,timerDelayMs:options.timerDelayMs,noFrames:options.noFrames,rafThrows:options.rafThrows,onFrame:()=>{
+  const clock=nativeInputClock({frameMs,frameIntervals:options.frameIntervals,timersBeforeFrames:options.timersBeforeFrames,timerDelayMs:options.timerDelayMs,noFrames:options.noFrames,rafThrows:options.rafThrows,onFrame:()=>{
     frames++;elapsed=frames*frameMs;
     if(options.moveActor&&frames===10)actors[0].position.z+=2;
 
@@ -109,7 +109,7 @@ for(const frameMs of [500,1000,1200])test(`tree approach retains a necessary sho
   assert.equal(result.reached,true,JSON.stringify(result));assert.ok(result.distance<=.28);assert.ok(elapsed<=12_000);
 });
 
-// Independent review's old-pass/new-fail static and grid-goal counterexamples.
+// Unobserved static obstacles and off-grid goal positions.
 const staticFixtures:Fixture[]=[
   {name:'unobserved static prop',start:{x:-3,z:0},target:{x:3,z:0},actors:[],
     statics:[{id:'prop',minX:-.5,maxX:.5,minZ:-.5,maxZ:.5}]},
@@ -175,7 +175,7 @@ test('malformed observed tree footprints throw and release keys',async()=>{
 });
 
 const restoredOverlap=JSON.parse(fs.readFileSync(new URL('./fixtures/native-waypoint-overlap-ci.json',import.meta.url),'utf8')) as Fixture;
-for(const frameMs of [800,1200,1400])test(`God-return overlap from CI exits through unchanged physics at ${frameMs}ms steps`,async()=>{
+for(const frameMs of [800,1200,1400])test(`God-return NPC overlap exits through unchanged physics at ${frameMs}ms steps`,async()=>{
   const {result,elapsed}=await replay(restoredOverlap,frameMs);
   assert.equal(result.reached,true,JSON.stringify(result));
   assert.ok(result.distance<=restoredOverlap.tolerance!);assert.ok(elapsed<=restoredOverlap.timeoutMs!);
@@ -208,9 +208,13 @@ test('arrival observed after the wall deadline cannot pass',async()=>{
   const {result,elapsed}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,timeoutMs:45_000},45_001);
   assert.equal(result.x,0);assert.equal(elapsed,45_000);assert.equal(result.reached,false);
 });
-test('arrival exactly at both budgets is permitted',async()=>{
+test('arrival at both budgets cannot pass while its keyup is still queued',async()=>{
   const {result}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,maxInputSeconds:.05,timeoutMs:50},50);
-  assert.equal(result.reached,true);
+  assert.equal(result.reached,false);
+});
+test('arrival exactly at both budgets is permitted after release consumption',async()=>{
+  const {result,simulation,elapsed}=await replay({...crossing,target:{x:.225,z:0},tolerance:.001,maxInputSeconds:.05,timeoutMs:50},50,{timersBeforeFrames:true});
+  assert.equal(result.reached,true);assert.equal(simulation,.05);assert.equal(elapsed,50);assert.equal((result as Result&{clock:{pendingInputChanges:number}}).clock.pendingInputChanges,0);
 });
 for(const badCounter of ['missing','NaN','rollback'] as const)test(`input budget rejects ${badCounter} counter and releases input`,async()=>{
   await assert.rejects(replay(crossing,50,{badCounter}),/observation reset or became unavailable/);
@@ -232,9 +236,9 @@ for(const maxInputSeconds of [0,-1,NaN,Infinity])test(`input budget rejects inva
 });
 test('wall watchdog releases keys without RAF and late callbacks cannot issue input',async()=>{
   let elapsed=0,nextId=10;const held=new Set<string>(),events:string[]=[],timers=new Map<number,()=>void>(),frames=new Map<number,()=>void>(),cancelled:number[]=[];
-  const canvas={},dataset={playerX:'0',playerZ:'0',playerInputSeconds:'3',characterSoles:'[]',treePresentation:'[]',simulationClock:'{"pendingSeconds":0}'};
+  const canvas={},dataset={playerX:'0',playerZ:'0',playerInputSeconds:'3',characterSoles:'[]',treePresentation:'[]',simulationClock:'{"pendingSeconds":0,"pendingInputChanges":0}'};
   const document={pointerLockElement:canvas,querySelector:(selector:string)=>selector==='#game canvas'?canvas:{dataset}};
-  const context={document,performance:{now:()=>elapsed},KeyboardEvent:class{
+  const context={document,addEventListener(){},removeEventListener(){},MutationObserver:class{observe(){}takeRecords(){return [];}disconnect(){}},performance:{now:()=>elapsed},KeyboardEvent:class{
     type:string;code:string;constructor(type:string,options:{code:string}){this.type=type;this.code=options.code;}
   },window:{dispatchEvent:(event:{type:string;code:string})=>{
     events.push(event.type+':'+event.code);if(event.type==='keydown')held.add(event.code);else held.delete(event.code);return true;
@@ -253,16 +257,16 @@ test('wall watchdog releases keys without RAF and late callbacks cannot issue in
 });
 
 
-test('a five-second foreground gap drains before the next finite input pulse',async()=>{
+test('a five-second foreground gap consumes prior input before the next finite pulse',async()=>{
   const {result,events,simulation,elapsed}=await replay(crossing,1000,{frameIntervals:[5000,100,100]});
   assert.equal(result.reached,true);assert.ok(result.distance<=.3);assert.ok(simulation<=2);assert.ok(elapsed<=45000);
   const presses=events.filter(e=>e.type==='keydown'&&e.code==='KeyD');
-  assert.ok(presses.length>1);assert.equal(presses[1].at,5200);
+  assert.ok(presses.length>1);assert.equal(presses[1].at,5000);
   assert.equal(events.find(e=>e.type==='keyup'&&e.code==='KeyD')?.at,250);
 });
 
-test('an arrived position with unconsumed debt cannot pass at the deadline',async()=>{
+test('an arrived position with consumed input can pass at the deadline despite world debt',async()=>{
   const {result,elapsed}=await replay({...crossing,target:{x:1.125,z:0},tolerance:.001,timeoutMs:2500},2500);
-  assert.equal(result.reached,false);assert.ok(result.distance<=.001);assert.equal(elapsed,2500);
+  assert.equal(result.reached,true);assert.ok(result.distance<=.001);assert.equal(elapsed,2500);assert.equal((result as Result&{clock:{pendingInputChanges:number}}).clock.pendingInputChanges,0);
   assert.equal((result as Result&{clock:{pendingSeconds:number}}).clock.pendingSeconds,.5);
 });

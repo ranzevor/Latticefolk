@@ -17,8 +17,8 @@ async function savedWorld(request:APIRequestContext) {
   return response.json() as Promise<{revision:number;snapshot:WorldPersistenceSnapshot|null}>;
 }
 async function position(page:Page) {
-  // Both normal callers have already observed ready worldStatus data. A direct
-  // read avoids the extra locator/ElementHandle round trip measured in CI.
+  // Both normal callers have already observed ready worldStatus data. A single
+  // DOM read avoids an extra locator/ElementHandle RPC.
   return page.evaluate(()=>{
     const data=document.querySelector<HTMLElement>('#worldStatus')?.dataset;
     if(!data||!data.playerX?.trim()||!data.playerZ?.trim())throw new Error('Oven position data is missing');

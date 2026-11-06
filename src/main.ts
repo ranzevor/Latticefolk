@@ -860,7 +860,7 @@ class TownGame {
   }
 
   attachVisualTarget(target:VisualTarget) {
-    // Asset-backed entities must never expose assistant-authored primitive geometry as a visible loading/error fallback.
+    // Asset-backed entities must never expose primitive geometry as a visible loading/error fallback.
     // The semantic group and authoritative physics remain alive while the licensed visual is pending or unavailable.
     target.group.clear();
     this.visualTargets.push(target);
@@ -3964,7 +3964,7 @@ class TownGame {
       });
       return count;
     },0);
-    // Read-only evidence, separate from the eight already accepted furniture targets.
+    // Read-only diagnostics, separate from the eight furniture targets.
     // Resolved bounds are diagnostics, not a substitute for first-person screenshot review.
     const ovens=[...this.objects.values()].filter(object=>isBakingOven(object.state)).map(object=>{
       const target=this.visualTargets.find(candidate=>candidate.group===object.mesh&&candidate.asset===BAKING_OVEN_ASSET);
@@ -4072,7 +4072,7 @@ class TownGame {
     ui.world.dataset.playerX=this.playerPosition.x.toFixed(4);
     ui.world.dataset.playerZ=this.playerPosition.z.toFixed(4);
     ui.world.dataset.playerInputSeconds=String(this.playerInputSeconds);
-    ui.world.dataset.simulationClock=JSON.stringify(this.simulationClock.diagnostics);
+    ui.world.dataset.simulationClock=JSON.stringify({...this.simulationClock.diagnostics,pendingInputChanges:this.simulationClock.pendingInputChanges});
     ui.world.dataset.simulationConsumedThrough=String(this.simulationClock.consumedThroughMs??'');
     ui.world.dataset.playerGroundingError=playerGroundingError.toFixed(5);
     ui.world.dataset.npcGroundingMaxError=npcGroundingMaxError.toFixed(5);
