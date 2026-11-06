@@ -1,20 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawn,execFileSync } from 'node:child_process';
 
-// Local-only validation: never dispatch CI, install packages, push, merge or spend
-// a remote runner allowance. Freeze source evidence before starting long tests.
 const root=fileURLToPath(new URL('../',import.meta.url));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
-const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-const output=path.join(root,'.local-validation',stamp);
-fs.mkdirSync(output,{recursive:true});
-const lock=path.join(root,'.local-validation','running.lock');
+function validationPaths(projectRoot,temporaryRoot=tmpdir()){
+  const output=fs.mkdtempSync(path.join(temporaryRoot,'latticefolk-validation-'));
+  const lock=path.join(projectRoot,'.local-validation','running.lock');
+  fs.mkdirSync(path.dirname(lock),{recursive:true});
+  return {output,lock};
+}
+const {output,lock}=validationPaths(root);
 let ownsLock=false;
 const record={startedAt:new Date().toISOString(),node:process.version,platform:process.platform,
-  gitHead:null,gitTree:null,sourceDigest:null,sourceUnchanged:null,steps:[],result:'in_progress',actionsUsed:false};
+  gitHead:null,gitTree:null,sourceDigest:null,sourceUnchanged:null,steps:[],result:'in_progress'};
 const writeRecord=()=>fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(record,null,2)+'\n');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const normalSave=()=>Object.fromEntries(['','.wal','.shm'].map(suffix=>{
@@ -62,9 +64,10 @@ try {
   }
   writeRecord();
   await npm(['run','check'],'check');
-  await npm(['run','test:e2e','--','--forbid-only','--reporter=list,html,json'],'browser',{
+  await npm(['run','test:e2e','--','--forbid-only','--reporter=list,html,json','--output',path.join(output,'test-results')],'browser',{
     PLAYWRIGHT_JSON_OUTPUT_FILE:path.join(output,'playwright.json'),
-    PLAYWRIGHT_HTML_OUTPUT_DIR:path.join(output,'playwright-report')
+    PLAYWRIGHT_HTML_OUTPUT_DIR:path.join(output,'playwright-report'),
+    PLAYWRIGHT_HTML_REPORT:path.join(output,'playwright-report')
   });
   const browser=JSON.parse(fs.readFileSync(path.join(output,'playwright.json'),'utf8'));
   record.browserStats=browser.stats;
@@ -88,8 +91,6 @@ try {
       try {record.browserStats=JSON.parse(fs.readFileSync(report,'utf8')).stats;}
       catch {record.browserReportUnreadable=true;}
     }
-    const results=path.join(root,'test-results');
-    if(fs.existsSync(results))fs.cpSync(results,path.join(output,'test-results'),{recursive:true});
     fs.unlinkSync(lock);
   }
   record.finishedAt=new Date().toISOString();writeRecord();

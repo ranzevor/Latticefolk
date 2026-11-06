@@ -1,8 +1,17 @@
 import { defineConfig } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+
+const htmlOutput = process.env.PLAYWRIGHT_HTML_OUTPUT_DIR || process.env.PLAYWRIGHT_HTML_REPORT;
+const temporaryOutput = htmlOutput ? dirname(resolve(htmlOutput)) : mkdtempSync(join(tmpdir(), 'latticefolk-playwright-'));
+const htmlOutputDirectory = htmlOutput ? resolve(htmlOutput) : join(temporaryOutput, 'playwright-report');
+process.env.PLAYWRIGHT_HTML_OUTPUT_DIR = htmlOutputDirectory;
 
 export default defineConfig({
   testDir: './e2e',
+  outputDir: join(temporaryOutput, 'test-results'),
   // The playable scenarios share one server-side SQLite world. Separate files must not
   // reset or write that world concurrently; isolate storage before increasing workers.
   workers: 1,
@@ -11,7 +20,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [
     ['list'],
-    ['html', { open: 'never', outputFolder: 'playwright-report' }]
+    ['html', { open: 'never', outputFolder: htmlOutputDirectory }]
   ],
   use: {
     baseURL: 'http://127.0.0.1:5173',
