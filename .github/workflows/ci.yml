@@ -45,13 +45,3 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Playable browser smoke
         run: node scripts/run-e2e-group.mjs ${{ matrix.group }}
-      - name: Upload playable evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playable-e2e-${{ github.run_id }}-${{ matrix.group }}
-          if-no-files-found: warn
-          path: |
-            test-results/
-            playwright-report/
-          retention-days: 14

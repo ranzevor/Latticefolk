@@ -30,7 +30,6 @@ async function autosave(page:Page,request:APIRequestContext){
 }
 async function nativeCrossing(page:Page,x:number,crossed:(x:number)=>boolean){
   const result=await page.evaluate(driveNativeWaypoint,{target:{x,z:1.2},timeoutMs:8000,tolerance:.2,maxInputSeconds:2});
-  console.info('late-wildlife-crossing',JSON.stringify(result));
   expect(result.reached).toBe(true);expect(crossed(result.x)).toBe(true);
 }
 
