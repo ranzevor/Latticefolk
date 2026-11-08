@@ -59,7 +59,7 @@ Latticefolk 的目标不是做“会聊天的 NPC 演示”，而是让决策模
 需要 Node.js 20+：
 
 ```bash
-git clone https://github.com/wangfumin1/Latticefolk.git
+git clone https://github.com/ranzevor/Latticefolk.git
 cd Latticefolk
 cp .env.example .env
 npm install
