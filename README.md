@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wangfumin1/Latticefolk/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/wangfumin1/Latticefolk/ci.yml?branch=main&label=CI&logo=github"></a>
+  <a href="https://github.com/ranzevor/Latticefolk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ranzevor/Latticefolk/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2ea44f"></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white">
   <img alt="Three.js" src="https://img.shields.io/badge/Three.js-r180-black?logo=threedotjs">
@@ -88,7 +88,7 @@ The project is deliberately **not tied to Jev**. Jev / TypeSafe System One is th
 Requirements: **Node.js 20+**.
 
 ```bash
-git clone https://github.com/wangfumin1/Latticefolk.git
+git clone https://github.com/ranzevor/Latticefolk.git
 cd Latticefolk
 cp .env.example .env
 npm install

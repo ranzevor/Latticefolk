@@ -60,7 +60,7 @@ El proyecto **no está acoplado a Jev**. Jev / TypeSafe System One es el primer 
 Requiere Node.js 20+:
 
 ```bash
-git clone https://github.com/wangfumin1/Latticefolk.git
+git clone https://github.com/ranzevor/Latticefolk.git
 cd Latticefolk
 cp .env.example .env
 npm install

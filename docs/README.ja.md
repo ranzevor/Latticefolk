@@ -54,7 +54,7 @@ Latticefolk は「会話できる NPC デモ」だけを目指していません
 Node.js 20+：
 
 ```bash
-git clone https://github.com/wangfumin1/Latticefolk.git
+git clone https://github.com/ranzevor/Latticefolk.git
 cd Latticefolk
 cp .env.example .env
 npm install
